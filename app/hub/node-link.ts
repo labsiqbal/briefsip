@@ -6,6 +6,7 @@ import type { HubAuthority, NodePrincipal } from './project-authority.ts';
 import type { HubRouting, RoutingFrame } from './routing.ts';
 import { transaction } from './schema.ts';
 export const NODE_FRAME_LIMIT = 65536;
+// Version 1 signatures must verify across the rename and rollback.
 export function signedNodeMessage(body: unknown, key: KeyObject, direction: 'hub' | 'node') {
     const keyId = sha256(createPublicKey(key).export({ type: 'spki', format: 'der' }));
     return { v: 1, keyId, body, signature: sign(null, Buffer.from(`briefsip.${direction}.v1\n${canonicalJson(body)}`), key).toString('base64url') };

@@ -6,7 +6,7 @@ import { initializeCanonicalSchema, schemaVersion, SCHEMA_VERSION, migration, mi
 
 test('legacy schema fixture stays byte-identical to Rust migrations', () => {
   for (const [version, fixture] of [[1, migration], [2, migrationV2], [3, migrationV3], [4, migrationV4]] as const) {
-    const rust = readFileSync(new URL(`../crates/briefsip-server/src/data/legacy-v${version}.sql`, import.meta.url));
+    const rust = readFileSync(new URL(`../crates/minarbot-server/src/data/legacy-v${version}.sql`, import.meta.url));
     assert(Buffer.from(fixture).equals(rust), `legacy-v${version}.sql drifted from Node fixture`);
   }
 });

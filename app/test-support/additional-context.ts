@@ -10,5 +10,5 @@ export function additionalContext(text: string): Record<string, { kind: 'applica
     }
   }
   if (value) chunks.push(value);
-  return Object.fromEntries(chunks.map((value, i) => [`briefsip_${String(i + 1).padStart(3, '0')}`, { kind: 'application', value }]));
+  return Object.fromEntries(chunks.map((value, i) => [`minarbot_${String(i + 1).padStart(3, '0')}`, { kind: 'application', value }]));
 }

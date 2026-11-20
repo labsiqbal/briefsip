@@ -1,8 +1,8 @@
-name: briefsip-searxng
+name: minarbot-searxng
 services:
   searxng:
     image: searxng/searxng@sha256:6012a064924a032969a2e7989d66971803f126a237a2fb6c62f10ae3d82093e1
-    container_name: briefsip-searxng
+    container_name: minarbot-searxng
     restart: unless-stopped
     ports:
       - "127.0.0.1:8890:8080"

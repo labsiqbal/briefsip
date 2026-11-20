@@ -7,7 +7,7 @@ export function useNewConversationShortcut(create: () => void) {
       event.preventDefault(); create();
     };
     window.addEventListener('keydown', key);
-    window.addEventListener('briefsip:new-conversation', create);
-    return () => { window.removeEventListener('keydown', key); window.removeEventListener('briefsip:new-conversation', create); };
+    window.addEventListener('minarbot:new-conversation', create);
+    return () => { window.removeEventListener('keydown', key); window.removeEventListener('minarbot:new-conversation', create); };
   }, [create]);
 }

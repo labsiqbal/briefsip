@@ -1,8 +1,9 @@
-// Briefsip HTTP session credentials stay in environment and never enter argv.
+import { productEnv } from './rename-env.mjs';
+// Minarbot HTTP session credentials stay in environment and never enter argv.
 import { StringDecoder } from 'node:string_decoder';
 let session, pending = '', bytes = 0, active = 0;
 const decoder = new StringDecoder('utf8');
-const endpoint = process.env.BRIEFSIP_MCP_URL, token = process.env.BRIEFSIP_MCP_TOKEN;
+const endpoint = productEnv('MINARBOT_MCP_URL'), token = productEnv('MINARBOT_MCP_TOKEN');
 process.stdin.on('data', chunk => {
   bytes += chunk.length;
   if (bytes > 16 * 1024 * 1024) process.exit(1);
@@ -25,7 +26,7 @@ process.stdin.on('data', chunk => {
         const payload = response.headers.get('content-type')?.includes('text/event-stream') ? body.split('\n').filter(line => line.startsWith('data:')).map(line => JSON.parse(line.slice(5))).find(item => item.id === value.id) : JSON.parse(body);
         if (!payload || payload.id !== value.id) throw new Error('MCP response missing.');
         process.stdout.write(JSON.stringify(payload) + '\n');
-      } catch { if (value.id !== undefined) process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: value.id, error: { code: -32603, message: 'Briefsip MCP request failed.' } }) + '\n'); }
+      } catch { if (value.id !== undefined) process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: value.id, error: { code: -32603, message: 'Minarbot MCP request failed.' } }) + '\n'); }
       finally { active--; }
     })();
   }

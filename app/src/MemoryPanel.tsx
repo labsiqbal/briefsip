@@ -1,3 +1,4 @@
+import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { useVisiblePolling } from './hooks/useVisiblePolling';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { memoryCommand, memoryDraft, type MemoryCommand, type MemoryDraft, type MemoryEntry } from './memory-command.ts';
@@ -9,10 +10,10 @@ type Entry = MemoryEntry;
 type Page = { items: Entry[]; next_after: string | null };
 export function MemoryPanel({ path, channel, archived, request, onClose }: { path: string; channel: boolean; archived: boolean; request: <T>(path: string, data?: unknown) => Promise<T>; onClose: () => void }) {
   const confirm = useConfirm();
-  const key = `briefsip:memory:${path}`;
+  const key = `minarbot:memory:${path}`;
   const draftKey = `${key}:draft`;
   const [recovery] = useState(() => {
-    try { const raw = sessionStorage.getItem(key), draft = sessionStorage.getItem(draftKey); return { pending: raw ? memoryCommand(JSON.parse(raw)) : null, draft: draft ? memoryDraft(JSON.parse(draft)) : null, error: '' }; }
+    try { const raw = readProductStorage(sessionStorage, key), draft = readProductStorage(sessionStorage, draftKey); return { pending: raw ? memoryCommand(JSON.parse(raw)) : null, draft: draft ? memoryDraft(JSON.parse(draft)) : null, error: '' }; }
     catch { return { pending: null, draft: null, error: 'Saved changes could not be read. Discard recovery to continue.' }; }
   });
   const [pending, setPending] = useState<MemoryCommand | null>(recovery.pending), [blocked, setBlocked] = useState(recovery.error);
@@ -37,14 +38,14 @@ export function MemoryPanel({ path, channel, archived, request, onClose }: { pat
     catch { setDraftStored(false); setError('Draft has not been saved in the browser. Copy the text before leaving this page.'); }
     setEntry(value.entry); setText(value.text); setEssential(value.essential); setAutomatic(value.automatic ?? false);
   }
-  function clear() { sessionStorage.removeItem(draftKey); setEntry(null); setText(''); setEssential(false); setAutomatic(false); }
+  function clear() { removeProductStorage(sessionStorage, draftKey); setEntry(null); setText(''); setEssential(false); setAutomatic(false); }
   async function choose(value: Entry | null) {
     if (locked || dirty && !await confirm({ title: 'Discard unsaved note changes?', confirm: 'Discard changes', danger: true })) return;
     draft({ entry: value, text: value?.text ?? '', essential: !!value?.essential, automatic: value?.selection_locked === 0 }); editor.current?.focus();
   }
   async function discard() {
     if (!await confirm({ title: 'Delete recovery data?', description: 'Changes may already be saved on the server. Check the list before making new changes.', confirm: 'Delete recovery', danger: true })) return;
-    try { sessionStorage.removeItem(key); setPending(null); setBlocked(''); setError(''); setNotice('Draft kept. For revision conflicts, choose Edit note from the latest list.'); if (blocked) clear(); setRefresh(n => n + 1); }
+    try { removeProductStorage(sessionStorage, key); setPending(null); setBlocked(''); setError(''); setNotice('Draft kept. For revision conflicts, choose Edit note from the latest list.'); if (blocked) clear(); setRefresh(n => n + 1); }
     catch { setError('Recovery data could not be deleted. Check browser storage.'); }
   }
   async function save(remove = false) {
@@ -59,10 +60,10 @@ export function MemoryPanel({ path, channel, archived, request, onClose }: { pat
     try {
       await request(path, command);
       if (!mounted.current) return;
-      clear(); sessionStorage.removeItem(key); setPending(null); setNotice('Changes saved.'); setRefresh(n => n + 1); heading.current?.focus();
+      clear(); removeProductStorage(sessionStorage, key); setPending(null); setNotice('Changes saved.'); setRefresh(n => n + 1); heading.current?.focus();
     } catch (error) {
       if (mounted.current && error && typeof error === 'object' && 'status' in error && [400, 413].includes(Number(error.status))) {
-        try { sessionStorage.removeItem(key); setPending(null); } catch { /* Keep exact retry if recovery storage cannot be cleared. */ }
+        try { removeProductStorage(sessionStorage, key); setPending(null); } catch { /* Keep exact retry if recovery storage cannot be cleared. */ }
       }
       if (mounted.current) setError(error instanceof TypeError ? 'Save result is unknown. Retry with the same changes.' : error instanceof Error ? error.message : 'Changes are not confirmed yet. Try again.');
     } finally { sending.current = false; if (mounted.current) setBusy(false); }

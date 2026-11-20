@@ -13,7 +13,7 @@ import { buildRelease } from '../scripts/release.mjs';
 import { createServer } from 'node:net';
 import { createServer as httpServer } from 'node:http';
 const exec = promisify(execFile), root = new URL('../',import.meta.url).pathname;
-const temp = () => mkdtempSync(join(tmpdir(),'briefsip-install-'));
+const temp = () => mkdtempSync(join(tmpdir(),'minarbot-install-'));
 let testIsolation: string, originalHome: string | undefined, originalPath: string | undefined;
 beforeEach(() => {
  testIsolation=temp();originalHome=process.env.HOME;originalPath=process.env.PATH;
@@ -129,7 +129,7 @@ test('installer rejects bad metadata, checksums and archive links without publis
  try {
    for(mode of ['metadata','hash','link']) {
      await assert.rejects(exec('sh',[join(root,'scripts/install-machine.sh'),'--source',source,'--token','bsi_'+ 'X'.repeat(43)],{env:{PATH:bin+':'+process.env.PATH,HOME:home},timeout:15000}),mode==='metadata'?/Invalid release metadata/:mode==='hash'?/integrity/:/Unsafe archive entry/);
-     assert(!fs.existsSync(join(home,'.local/share/briefsip/releases/current')));assert(!fs.existsSync(join(home,'.config/briefsip/launcher.json')));assert(!readFileSync(calls,'utf8').includes('enable'));assert.deepEqual(readdirSync(join(home,'.local/share/briefsip/releases')),[]);
+     assert(!fs.existsSync(join(home,'.local/share/minarbot/releases/current')));assert(!fs.existsSync(join(home,'.config/minarbot/launcher.json')));assert(!readFileSync(calls,'utf8').includes('enable'));assert.deepEqual(readdirSync(join(home,'.local/share/minarbot/releases')),[]);
    }
  } finally {server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));rmSync(dir,{recursive:true,force:true});}
 });

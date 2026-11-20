@@ -18,7 +18,7 @@ export const mcpScopeCatalog = [
   { id:'routines:write', group:'Write', label:'Manage routines', hint:'Create, edit, pause, resume, and run routines. Deletion requires confirmation.' },
   { id:'agents:message', group:'Run', label:'Send messages', hint:'Start local agent work and read replies to its own messages.' },
   { id:'workflows:run', group:'Run', label:'Run workflows', hint:'Start runs of existing workflows.' },
-  { id:'computer:run', group:'Run', label:'Open agent computers', hint:'Start computers already enabled by the Owner. Viewer access stays in Briefsip.' },
+  { id:'computer:run', group:'Run', label:'Open agent computers', hint:'Start computers already enabled by the Owner. Viewer access stays in Minarbot.' },
   { id:'orchestration', group:'Run', label:'Use delegation and app tools', hint:'Delegate tasks, read or cancel them, and use granted tools in a running conversation.' },
   { id:'machine:update', group:'Run', label:'Allow paired machine updates', hint:'Requires a paired machine and update consent on both devices. Creating this token alone cannot apply updates.' },
 ] as const;

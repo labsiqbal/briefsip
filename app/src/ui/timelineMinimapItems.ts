@@ -18,7 +18,7 @@ export function deriveTimelineMinimapItems(turns: readonly MinimapTurn[]): Timel
   });
 }
 
-// Reuse Briefsip's Markdown lexer/entity decoder; preview never creates model-supplied DOM.
+// Reuse Minarbot's Markdown lexer/entity decoder; preview never creates model-supplied DOM.
 function tokenText(tokens: Token[], depth = 0): string {
   if (depth > 40) return '';
   return tokens.map(token => {

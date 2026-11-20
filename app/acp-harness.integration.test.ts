@@ -10,11 +10,11 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { startApp } from './test-bridge.ts';
 import { findHostHarness } from './test-support/find-host-harness.ts';
 
-const enabled = process.env.BRIEFSIP_ACP_IT === '1';
+const enabled = process.env.MINARBOT_ACP_IT === '1';
 const evidence = new URL('./test-support/acp-harnesses/', import.meta.url);
 if (enabled) mkdirSync(evidence, { recursive: true });
 for (const runtime of ['hermes', 'antigravity', 'grok', 'pi'] as const) test(`${runtime}: installed harness prompt, tool and stop`, { skip: !enabled, timeout: 240_000 }, async context => {
-  const root = mkdtempSync(join(tmpdir(), `briefsip-${runtime}-it-`)), home = join(root, 'home'), workspace = join(root, 'workspace');
+  const root = mkdtempSync(join(tmpdir(), `minarbot-${runtime}-it-`)), home = join(root, 'home'), workspace = join(root, 'workspace');
   mkdirSync(home); mkdirSync(workspace);
   const sourceHome = process.env.HOME!, executable = findHostHarness(runtime);
   const result = { runtime, version: null as string | null, protocol: false, prompt: false, tool: false, stop: false, resume: null as boolean | null, reason: null as string | null, approvals: 0, stage: 'availability' };
@@ -113,14 +113,14 @@ for (const runtime of ['hermes', 'antigravity', 'grok', 'pi'] as const) test(`${
     };
 
     result.stage = 'prompt';
-    await complete('Reply exactly BRIEFSIP_ACP_OK. Use no tools.', 'BRIEFSIP_ACP_OK');
+    await complete('Reply exactly MINARBOT_ACP_OK. Use no tools.', 'MINARBOT_ACP_OK');
     const sessionId = session();
     if (runtime !== 'pi') assert(sessionId);
     result.protocol = result.prompt = true;
 
     result.stage = 'tool';
     const tool = await complete(
-      'Invoke only the Briefsip MCP create_workspace_file tool with path marker.txt and text marker. Use no shell or native file tools. Reply MARKER_WRITTEN after it succeeds.',
+      'Invoke only the Minarbot MCP create_workspace_file tool with path marker.txt and text marker. Use no shell or native file tools. Reply MARKER_WRITTEN after it succeeds.',
       'MARKER_WRITTEN',
     );
     assert(tool.activity.harness.length > 0 || tool.activity.stream.some(entry => entry.kind === 'tool'), 'Protocol tool event was not observed');
@@ -133,7 +133,7 @@ for (const runtime of ['hermes', 'antigravity', 'grok', 'pi'] as const) test(`${
 
     if (sessionId) {
       result.stage = 'resume';
-      await complete('Reply exactly BRIEFSIP_RESUMED. Use no tools.', 'BRIEFSIP_RESUMED');
+      await complete('Reply exactly MINARBOT_RESUMED. Use no tools.', 'MINARBOT_RESUMED');
       assert.equal(session(), sessionId);
       result.resume = true;
     }

@@ -1,6 +1,6 @@
 {
-  "name": "Briefsip",
-  "short_name": "Briefsip",
+  "name": "Minarbot",
+  "short_name": "Minarbot",
   "start_url": "/",
   "display": "standalone",
   "theme_color": "#fcfcfc",

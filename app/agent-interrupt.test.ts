@@ -9,7 +9,7 @@ import { startApp } from './test-bridge.ts';
 import { testDatabase } from './test-support/database.ts';
 
 test('caller interruption cancels only owned deliveries, journals notice and preserves other work', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-interrupt-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-interrupt-'));
   const captures: any[] = [], releases: (() => void)[] = [];
   let recipient = '', callerId = '', nestedRecipient = '', hold = true, failInterruptReply = true, injectFailure = false;
   const provider = createServer(async (req, res) => {

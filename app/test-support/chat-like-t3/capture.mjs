@@ -19,18 +19,18 @@ try {
  const base=`http://127.0.0.1:${server.httpServer.address().port}/test-support/chat-like-t3/harness.html`;
  await mkdir(output+'screenshots',{recursive:true});
  for(const kind of ['direct','room']) {
-  for(const width of [1600,480]) for(const size of ['compact','default','large','larger']) for(const palette of ['briefsip','github','catppuccin','everforest','solarized','midnight']) for(const theme of ['dark','light']) {
+  for(const width of [1600,480]) for(const size of ['compact','default','large','larger']) for(const palette of ['minarbot','github','catppuccin','everforest','solarized','midnight']) for(const theme of ['dark','light']) {
    await page.setViewportSize({width,height:1600});
    await page.goto(base+'?'+new URLSearchParams({kind,size,palette,theme}));
-   await page.locator('.briefsip-side .message-body .markdown p').first().waitFor({timeout:15000});
+   await page.locator('.minarbot-side .message-body .markdown p').first().waitFor({timeout:15000});
    await page.evaluate(()=>document.fonts.ready);
    // Keep the actual Radix work log expanded in the reference capture.
    if(kind==='room') await page.getByRole('region', { name: 'Reply from Release Lead' }).locator('.room-agent__status').click();
-   const disclosure=page.locator('.briefsip-side .turn-activity .k-collapsible__trigger').first();
+   const disclosure=page.locator('.minarbot-side .turn-activity .k-collapsible__trigger').first();
    if(kind==='direct' && await disclosure.count())await disclosure.click();
    await page.mouse.move(0,0);
    const values=await page.evaluate(()=>{
-    const css=(selector)=>{const s=getComputedStyle(document.querySelector('.briefsip-side '+selector));return {fontSize:s.fontSize,lineHeight:s.lineHeight,padding:s.padding,borderRadius:s.borderRadius,maxWidth:s.maxWidth,gap:s.gap,border:s.border,background:s.backgroundColor}};
+    const css=(selector)=>{const s=getComputedStyle(document.querySelector('.minarbot-side '+selector));return {fontSize:s.fontSize,lineHeight:s.lineHeight,padding:s.padding,borderRadius:s.borderRadius,maxWidth:s.maxWidth,gap:s.gap,border:s.border,background:s.backgroundColor}};
     return {human:css('.human-bubble'),reply:css('.message-body .markdown p'),heading:css('.markdown :is(h1,h3)'),code:css('.markdown pre'),table:css('.markdown table'),cell:css('.markdown td'),composer:css('.composer'),input:css('.composer__input'),overflow:document.documentElement.scrollWidth>innerWidth+1};
    });
    assert(!values.overflow,`${kind}/${width}/${size}/${palette}/${theme}: page overflow`);
@@ -42,9 +42,9 @@ try {
     assert.equal(parseFloat(values.code.fontSize),13*scale);
     const match=await page.evaluate(()=>{
      const compare=(a,b,keys)=>keys.map(key=>[key,getComputedStyle(document.querySelector(a))[key],getComputedStyle(document.querySelector(b))[key]]);
-     return [...compare('.t3-side .chat-markdown p','.briefsip-side .markdown p',['fontSize','lineHeight']),...compare('.t3-side .chat-markdown h1','.briefsip-side .markdown h1',['fontSize','lineHeight']),...compare('.t3-side .chat-markdown td','.briefsip-side .markdown td',['fontSize','padding','borderBottomWidth']),...compare('.ref-composer','.briefsip-side .composer',['borderRadius']),...compare('.t3-side .chat-markdown pre','.briefsip-side .markdown pre',['fontSize','lineHeight','padding'])];
+     return [...compare('.t3-side .chat-markdown p','.minarbot-side .markdown p',['fontSize','lineHeight']),...compare('.t3-side .chat-markdown h1','.minarbot-side .markdown h1',['fontSize','lineHeight']),...compare('.t3-side .chat-markdown td','.minarbot-side .markdown td',['fontSize','padding','borderBottomWidth']),...compare('.ref-composer','.minarbot-side .composer',['borderRadius']),...compare('.t3-side .chat-markdown pre','.minarbot-side .markdown pre',['fontSize','lineHeight','padding'])];
     });
-    for(const [key,t3,briefsip] of match) assert.equal(briefsip,t3,`${kind}/${width}/${size}/${palette}/${theme}: ${key}`);
+    for(const [key,t3,minarbot] of match) assert.equal(minarbot,t3,`${kind}/${width}/${size}/${palette}/${theme}: ${key}`);
     values.referenceComparison=match;
    }
    const name=`after-${kind}-${width}-${size}-${palette}-${theme}.png`;

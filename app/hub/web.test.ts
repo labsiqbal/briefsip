@@ -10,7 +10,7 @@ import { parseDraft, parseJoin, parseGrant } from '../src/hub/client.ts';
 test('pilot web adapters: no outsider reads, exact mailbox acceptance, owner node/agent binding, role and participation policies', () => {
   const db = testDatabase(':memory:'); initializeHubSchema(db);
   try {
-    const authority = createHubAuthority(db, { domain: 'briefsip.test', mailboxKey: Buffer.alloc(32, 9) }), web = createHubWebApi(authority);
+    const authority = createHubAuthority(db, { domain: 'minarbot.test', mailboxKey: Buffer.alloc(32, 9) }), web = createHubWebApi(authority);
     const identity = (subject: string) => ({ issuer: 'https://identity.test', subject, verifiedMailboxes: [`${subject}@example.test`] });
     const alice = authority.provisionAccount(identity('alice'), true), bob = authority.provisionAccount(identity('bob'), true), eve = authority.provisionAccount(identity('eve'), true);
     const project = authority.createProject(alice, 'alpha', 'Alpha'), ctx = (account: string) => authority.resolveProject(project.host, account);

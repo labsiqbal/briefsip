@@ -17,10 +17,10 @@ import { canonicalHttp } from './test-support/canonical-http.ts';
 import type { HumanActor } from './test-support/auth.ts';
 
 test('canonical backup restores private evidence with fresh authority and no revived invitation or execution', async () => {
-  const f = canonicalHttp('briefsip-restore-');
+  const f = canonicalHttp('minarbot-restore-');
   const { dir, db, owner } = f, destination = join(dir, 'restored.sqlite');
   const member = f.addAccount('user_member');
-  const mail={keyId:randomUUID(),key:Buffer.alloc(32,7),lookupKey:Buffer.alloc(32,8),from:'Briefsip <owner@example.com>',origin:'https://briefsip.example'};
+  const mail={keyId:randomUUID(),key:Buffer.alloc(32,7),lookupKey:Buffer.alloc(32,8),from:'Minarbot <owner@example.com>',origin:'https://minarbot.example'};
   const clerk = createClerkClient({ ...f.auth, telemetry: { disabled: true } });
   clerk.users.getUser = async subject => ({ id: subject, banned: false, locked: false, emailAddresses: [{ emailAddress: 'member@example.com', verification: { status: 'verified' } }] }) as Awaited<ReturnType<typeof clerk.users.getUser>>;
   const options = { clerk, mail: () => mail, mailFrom: mail.from, mailOrigin: mail.origin };
@@ -109,7 +109,7 @@ test('canonical backup restores private evidence with fresh authority and no rev
 });
 
 test('pre-v3 canonical restore disables retained automation and rejects downgraded or changed backup authority',async()=>{
-  const dir=mkdtempSync(join(tmpdir(),'briefsip-restore-versions-'));
+  const dir=mkdtempSync(join(tmpdir(),'minarbot-restore-versions-'));
   try{
     for(const version of [1,2] as const){
       const db=testDatabase(join(dir,`source-${version}.sqlite`));initializeCanonicalSchema(db,Date.now(),version);
@@ -124,9 +124,9 @@ test('pre-v3 canonical restore disables retained automation and rejects downgrad
           assert.equal(restored.prepare('SELECT status FROM turn_waits').get()!.status,'closed');
         }finally{restored.close();}
         const tampered=testDatabase(backup.file);
-        tampered.exec("UPDATE briefsip_backup_authority SET generation='wrong'");tampered.close();
+        tampered.exec("UPDATE minarbot_backup_authority SET generation='wrong'");tampered.close();
         const invalid=join(dir,`invalid-${version}.sqlite`);assert.throws(()=>restoreWorkspace(backup.file,invalid),/authority mismatch/);assert(!existsSync(invalid));
-        const downgraded=testDatabase(backup.file);downgraded.exec("UPDATE briefsip_backup SET format='briefsip-workspace',version=1");downgraded.close();
+        const downgraded=testDatabase(backup.file);downgraded.exec("UPDATE minarbot_backup SET format='minarbot-workspace',version=1");downgraded.close();
         assert.throws(()=>restoreWorkspace(backup.file,invalid),/backup format/);assert(!existsSync(invalid));
       }finally{backup.cleanup();}
     }
@@ -134,7 +134,7 @@ test('pre-v3 canonical restore disables retained automation and rejects downgrad
 });
 
 test('read-only restore upgrades legacy canonical owner marker before reconcile',async()=>{
-  const dir=mkdtempSync(join(tmpdir(),'briefsip-restore-legacy-marker-')),db=testDatabase(join(dir,'source.sqlite'));
+  const dir=mkdtempSync(join(tmpdir(),'minarbot-restore-legacy-marker-')),db=testDatabase(join(dir,'source.sqlite'));
   initializeCanonicalSchema(db);
   const owner={accountId:randomUUID(),issuer:'https://fixture.example',subject:'owner',sessionId:'owner-session',expiresAt:Date.now()+60000};
   db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(owner.accountId,owner.issuer,owner.subject,Date.now());
@@ -142,34 +142,34 @@ test('read-only restore upgrades legacy canonical owner marker before reconcile'
   db.prepare("INSERT INTO project_members(project,account,role,grant_revision,deleted) VALUES (?,?, 'owner',1,0)").run(project,owner.accountId);
   const backup=await workspaceSnapshot(db);db.close();
   try{
-    const legacy=testDatabase(backup.file);const generation=legacy.prepare('SELECT generation FROM briefsip_backup_authority').get()!.generation;
-    legacy.exec('ALTER TABLE briefsip_backup_authority RENAME TO briefsip_backup_authority_new; CREATE TABLE briefsip_backup_authority(generation TEXT NOT NULL) STRICT;');
-    legacy.prepare('INSERT INTO briefsip_backup_authority VALUES (?)').run(generation);legacy.exec('DROP TABLE briefsip_backup_authority_new');legacy.close();
+    const legacy=testDatabase(backup.file);const generation=legacy.prepare('SELECT generation FROM minarbot_backup_authority').get()!.generation;
+    legacy.exec('ALTER TABLE minarbot_backup_authority RENAME TO minarbot_backup_authority_new; CREATE TABLE minarbot_backup_authority(generation TEXT NOT NULL) STRICT;');
+    legacy.prepare('INSERT INTO minarbot_backup_authority VALUES (?)').run(generation);legacy.exec('DROP TABLE minarbot_backup_authority_new');legacy.close();
     const restoredPath=join(dir,'restored.sqlite');
     const { bootstrapFile } = checkedRestore(['--read-only', backup.file, '--db', restoredPath]);
     const restored=testDatabase(restoredPath);try{
-      assert.equal(restored.prepare('SELECT owner_account FROM briefsip_backup_authority').get()!.owner_account,owner.accountId);
-      const { sessionFile } = checkedRestore(['reconcile','--db',restoredPath,'--bootstrap',bootstrapFile], restoreIdentity(owner, 'https://briefsip.example')());
+      assert.equal(restored.prepare('SELECT owner_account FROM minarbot_backup_authority').get()!.owner_account,owner.accountId);
+      const { sessionFile } = checkedRestore(['reconcile','--db',restoredPath,'--bootstrap',bootstrapFile], restoreIdentity(owner, 'https://minarbot.example')());
       assert.equal(JSON.parse(readFileSync(sessionFile,'utf8')).recoveryGeneration,JSON.parse(readFileSync(bootstrapFile,'utf8')).recoveryGeneration);
     }finally{restored.close();}
   }finally{backup.cleanup();rmSync(dir,{recursive:true,force:true});}
 });
 
 test('operator CLI restores a canonical backup read-only without script credentials',async()=>{
-  const dir=mkdtempSync(join(tmpdir(),'briefsip-restore-cli-')),db=testDatabase(join(dir,'source.sqlite'));initializeCanonicalSchema(db);
+  const dir=mkdtempSync(join(tmpdir(),'minarbot-restore-cli-')),db=testDatabase(join(dir,'source.sqlite'));initializeCanonicalSchema(db);
   const backup=await workspaceSnapshot(db);db.close();
   try{
     const target=join(dir,'restored.sqlite'),result=checkedRestore(['--read-only',backup.file,'--db',target]);
     assert.equal(result.exitCode,0);assert.equal(result.database,target);assert.equal(result.state,'read_only_recovery');
     const restored=testDatabase(target);try{assert.equal(restored.prepare('SELECT serving_state FROM authority_state').get()!.serving_state,'read_only_recovery');}finally{restored.close();}
     assert.equal(restoreCommand(['--read-only',backup.file,'--db',target,'--activate']).exitCode, 2);
-    const legacy=join(dir,'legacy.sqlite'),old=testDatabase(legacy);old.exec("CREATE TABLE briefsip_backup(format TEXT,version INTEGER); INSERT INTO briefsip_backup VALUES ('briefsip-workspace',1)");old.close();
+    const legacy=join(dir,'legacy.sqlite'),old=testDatabase(legacy);old.exec("CREATE TABLE minarbot_backup(format TEXT,version INTEGER); INSERT INTO minarbot_backup VALUES ('minarbot-workspace',1)");old.close();
     const invalid=join(dir,'invalid.sqlite');assert.throws(()=>checkedRestore(['--read-only',legacy,'--db',invalid]),/canonical backup/);assert(!existsSync(invalid));
   }finally{backup.cleanup();rmSync(dir,{recursive:true,force:true});}
 });
 
 test('local restore bootstrap requires recorded owner identity and issues expiring ingest-only proof',()=>{
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-restore-proof-')), database = join(dir, 'recovery.sqlite');
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-restore-proof-')), database = join(dir, 'recovery.sqlite');
   const db = testDatabase(database); chmodSync(database, 0o600); initializeCanonicalSchema(db);
   const owner: HumanActor = { accountId: randomUUID(), issuer: 'https://fixture.example', subject: 'owner', sessionId: 'owner-session', expiresAt: Date.now() + 60_000 };
   const stranger = { ...owner, accountId: randomUUID(), subject: 'stranger' };
@@ -179,9 +179,9 @@ test('local restore bootstrap requires recorded owner identity and issues expiri
     db.prepare('INSERT INTO projects(id,account,name,private) VALUES (?,?,?,0)').run(id, actor.accountId, name);
     db.prepare("INSERT INTO project_members VALUES (?,?,'owner',1,0)").run(id, actor.accountId);
   }
-  db.exec('CREATE TABLE briefsip_backup_authority(generation TEXT,owner_account TEXT)');
-  db.prepare('INSERT INTO briefsip_backup_authority SELECT generation,? FROM authority_state').run(owner.accountId);
-  const identity = restoreIdentity(owner, 'https://briefsip.example');
+  db.exec('CREATE TABLE minarbot_backup_authority(generation TEXT,owner_account TEXT)');
+  db.prepare('INSERT INTO minarbot_backup_authority SELECT generation,? FROM authority_state').run(owner.accountId);
+  const identity = restoreIdentity(owner, 'https://minarbot.example');
   const bootstrap = () => checkedRestore(['bootstrap', '--db', database]).bootstrapFile;
   const reconcile = (path: string, actor: HumanActor = owner) => checkedRestore(['reconcile', '--db', database, '--bootstrap', path], identity(actor));
   try {

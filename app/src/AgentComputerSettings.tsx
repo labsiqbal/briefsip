@@ -1,17 +1,18 @@
+import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Button, Card, Progress, Row, SkeletonRows, Switch, useConfirm, RecoveryAlert } from './ui/kit';
 import { useVisiblePolling } from './hooks/useVisiblePolling';
 import type { ComputerRequest, ComputerStatus } from './AgentComputerPanel';
 type Command = { id: string; revision: number; enabled: boolean };
 export function useComputerSettings(agent: string, request: ComputerRequest, onSaved?: (status: ComputerStatus) => void) {
-  const key = `briefsip-computer:${agent}`;
+  const key = `minarbot-computer:${agent}`;
   const [status, setStatus] = useState<ComputerStatus | null>(null), [pending, setPending] = useState<Command | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false), [invalid, setInvalid] = useState(false);
 
   const mounted = useRef(true), flight = useRef(false), confirm = useConfirm();
   useEffect(() => {
     mounted.current = true;
     try {
-      const raw = sessionStorage.getItem(key);
+      const raw = readProductStorage(sessionStorage, key);
       if (raw) { const saved = JSON.parse(raw); if (!saved || typeof saved !== 'object' || Object.keys(saved).length !== 3 || typeof saved.id !== 'string' || !/^[a-f0-9-]{36}$/i.test(saved.id) || !Number.isSafeInteger(saved.revision) || saved.revision < 0 || typeof saved.enabled !== 'boolean') throw new Error(); setPending(saved); }
     } catch { setInvalid(true); }
     return () => { mounted.current = false; };
@@ -26,7 +27,7 @@ export function useComputerSettings(agent: string, request: ComputerRequest, onS
     const command = pending ?? { id: crypto.randomUUID(), revision: status.revision, enabled };
     try { sessionStorage.setItem(key, JSON.stringify(command)); } catch { setError('Browser could not save recovery data. Check site storage.'); return; }
     flight.current = true; setPending(command); setBusy(true); setError('');
-    try { const next = await request<ComputerStatus>(`/api/agents/${agent}/computer`, command); if (!mounted.current) return; sessionStorage.removeItem(key); setStatus(next); setPending(null); onSaved?.(next); return next; }
+    try { const next = await request<ComputerStatus>(`/api/agents/${agent}/computer`, command); if (!mounted.current) return; removeProductStorage(sessionStorage, key); setStatus(next); setPending(null); onSaved?.(next); return next; }
     catch (error) { if (mounted.current) setError(error instanceof Error ? error.message : 'Computer change is not confirmed. Retry same request.'); }
     finally { flight.current = false; if (mounted.current) setBusy(false); }
   }
@@ -34,7 +35,7 @@ export function useComputerSettings(agent: string, request: ComputerRequest, onS
     if (flight.current) return;
     if ((pending || invalid) && !await confirm({ title: 'Discard computer request?', description: 'Changes already accepted by the server still apply.', confirm: 'Discard and reload', danger: true })) return;
     flight.current = true; setBusy(true);
-    try { const next = await request<ComputerStatus>(`/api/agents/${agent}/computer`); if (!mounted.current) return; sessionStorage.removeItem(key); setStatus(next); setPending(null); setInvalid(false); setError(''); }
+    try { const next = await request<ComputerStatus>(`/api/agents/${agent}/computer`); if (!mounted.current) return; removeProductStorage(sessionStorage, key); setStatus(next); setPending(null); setInvalid(false); setError(''); }
     catch (error) { if (mounted.current) setError(error instanceof Error ? error.message : 'Status could not load.'); }
     finally { flight.current = false; if (mounted.current) setBusy(false); }
   }

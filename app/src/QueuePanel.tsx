@@ -1,3 +1,4 @@
+import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { usePolling } from './hooks/usePolling';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -7,13 +8,13 @@ type Entry = { previous: Neighbor | null; next: Neighbor | null; id: string; age
 type Command = { id: string; target: string; other: string; revision: number; otherRevision: number };
 export function QueuePanel({ path, request, onOpen }: { path: string; request: <T>(path: string, data?: unknown) => Promise<T>; onOpen: (id: string) => void }) {
   const confirm = useConfirm();
-  const endpoint = path.replace(/\/turns$/, '/queue'), key = `briefsip-queue-order:${endpoint}`;
+  const endpoint = path.replace(/\/turns$/, '/queue'), key = `minarbot-queue-order:${endpoint}`;
   const [open, setOpen] = useState(false), [rows, setRows] = useState<Entry[]>([]), [more, setMore] = useState(false), [error, setError] = useState(''), [loadError, setLoadError] = useState(''), [busy, setBusy] = useState(false), [refresh, setRefresh] = useState(0);
   const [pages, setPages] = useState<{ after: number; snapshot: string }[]>([]), [nextPage, setNextPage] = useState<{ after: number; snapshot: string } | null>(null), [notice, setNotice] = useState(''), [loading, setLoading] = useState(true);
   const page = pages.at(-1);
   const [recovery] = useState(() => {
     try {
-      const saved = sessionStorage.getItem(key); if (!saved) return { pending: null, invalid: false };
+      const saved = readProductStorage(sessionStorage, key); if (!saved) return { pending: null, invalid: false };
       const value = JSON.parse(saved), uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
       if (!value || !['id','target','other'].every(field => typeof value[field] === 'string' && uuid.test(value[field])) || !['revision','otherRevision'].every(field => Number.isSafeInteger(value[field]) && value[field] >= 1)) throw new Error();
       return { pending: value as Command, invalid: false };
@@ -39,7 +40,7 @@ export function QueuePanel({ path, request, onOpen }: { path: string; request: <
     const command = pending ?? { id: crypto.randomUUID(), target: row!.id, other: other!.id, revision: row!.revision, otherRevision: other!.revision };
     try { sessionStorage.setItem(key, JSON.stringify(command)); setPending(command); } catch { setError('Order has not been saved in the browser. Check site storage.'); return; }
     flight.current = true; setBusy(true); generation.current++;
-    try { await request(endpoint, command); if (!mounted.current) return; sessionStorage.removeItem(key); setPending(null); setError(''); setPages([]); setRefresh(value => value + 1); }
+    try { await request(endpoint, command); if (!mounted.current) return; removeProductStorage(sessionStorage, key); setPending(null); setError(''); setPages([]); setRefresh(value => value + 1); }
     catch (error) { if (mounted.current) setError(error instanceof Error ? error.message : 'Order is not confirmed yet. Try again.'); }
     finally { flight.current = false; if (mounted.current) setBusy(false); }
   }
@@ -50,7 +51,7 @@ export function QueuePanel({ path, request, onOpen }: { path: string; request: <
     {loadError && <Alert tone="error">{loadError}</Alert>}
     {error && <Alert tone="error">{error}</Alert>}
     {invalid && <Alert tone="error">Saved order request is invalid.</Alert>}
-    {(pending || invalid) && <RecoveryAlert inFlight={busy} tone="warn" title="Order awaits confirmation" actions={<>{pending && <Button size="sm" disabled={busy} onClick={() => void move()}>Retry order</Button>}<Button size="sm" disabled={busy} onClick={async () => { if (!await confirm({ title: 'Discard the saved order request?', description: 'Changes already accepted by the server still apply.', confirm: 'Discard request', danger: true })) return; try { sessionStorage.removeItem(key); setPending(null); setInvalid(false); setError(''); setRefresh(value => value + 1); } catch { setError('Browser storage is unavailable.'); } }}>Discard saved request</Button></>} />}
+    {(pending || invalid) && <RecoveryAlert inFlight={busy} tone="warn" title="Order awaits confirmation" actions={<>{pending && <Button size="sm" disabled={busy} onClick={() => void move()}>Retry order</Button>}<Button size="sm" disabled={busy} onClick={async () => { if (!await confirm({ title: 'Discard the saved order request?', description: 'Changes already accepted by the server still apply.', confirm: 'Discard request', danger: true })) return; try { removeProductStorage(sessionStorage, key); setPending(null); setInvalid(false); setError(''); setRefresh(value => value + 1); } catch { setError('Browser storage is unavailable.'); } }}>Discard saved request</Button></>} />}
     {loading && <p className="k-field__hint" role="status">Loading queue...</p>}
     {!loading && !rows.length && !error && !loadError && <EmptyState title="No queued messages yet." />}
     {!!rows.length && <Card>{rows.map(row => <Row key={row.id}

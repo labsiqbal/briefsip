@@ -9,7 +9,7 @@ import { startApp } from './test-bridge.ts';
 import { testDatabase } from './test-support/database.ts';
 
 test('provider account switch requires scoped browser consent and survives restart without replay', async () => {
-  const directory=mkdtempSync(join(tmpdir(),'briefsip-account-consent-')),calls:{path:string;model:string}[]=[];
+  const directory=mkdtempSync(join(tmpdir(),'minarbot-account-consent-')),calls:{path:string;model:string}[]=[];
   let command:unknown, advertised=false, toolName='set_provider_account', hold=false;
   const provider=createServer(async(req,res)=>{
     let raw='';for await(const part of req)raw+=part;const body=JSON.parse(raw);
@@ -62,7 +62,7 @@ test('provider account switch requires scoped browser consent and survives resta
 });
 
 test('provider account metadata tool redacts credentials and paths', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-account-list-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-account-list-'));
   const results: unknown[] = [];
   let args = '{}', advertised = false;
   const provider = createServer(async (req, res) => {
@@ -113,7 +113,7 @@ test('provider account metadata tool redacts credentials and paths', async () =>
 });
 
 test('private model discovery uses selected account, pages results and cancels without continuation', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-model-list-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-model-list-'));
   const results: any[] = [], catalogCalls: string[] = [];
   let args: unknown = {}, mode = 'ok', advertised = false, completions = 0, catalogClosed = false;
   const provider = createServer(async (req, res) => {
@@ -183,7 +183,7 @@ test('private model discovery uses selected account, pages results and cancels w
 for (const source of ['openai-compatible', 'anthropic', 'gemini'] as const) for (const target of ['openai-compatible', 'anthropic', 'gemini'] as const) {
   if (source === target) continue;
   test(`confirmed account switch ${source} to ${target} retains consent across restart`, async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'briefsip-consent-family-'));
+    const directory = mkdtempSync(join(tmpdir(), 'minarbot-consent-family-'));
     const calls: { account: string; body: any }[] = [];
     let phase = 'seed';
     const provider = createServer(async (req, res) => {

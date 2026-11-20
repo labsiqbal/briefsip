@@ -20,7 +20,7 @@
         "hasExactScope",
         "hasBoundedCloudProofLifetime"
       ],
-      "adaptation": "Native structural request/origin types; Briefsip local bootstrap subject; no T3 or Effect import.",
+      "adaptation": "Native structural request/origin types; Minarbot local bootstrap subject; no T3 or Effect import.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "9576e368b40d72c61e3c6beb340d02b3678893266e6e20d9ce86c358724b96db",
       "localPath": "app/t3/environment-link.ts",
@@ -108,7 +108,7 @@
       "localPaths": [
         "app/src/hooks/useNarrowSidebar.ts",
         "app/src/App.tsx",
-        "app/src/ui/briefsip.css"
+        "app/src/ui/minarbot.css"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
@@ -124,7 +124,7 @@
       "localPaths": [
         "app/src/ui/themes.ts",
         "app/src/ui/chat.css",
-        "app/src/ui/briefsip.css"
+        "app/src/ui/minarbot.css"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
@@ -193,9 +193,9 @@
         "createSelfVerification"
       ],
       "sourceRevision": "local-node-frozen",
-      "sourceSha256": "translated-into-crates-briefsip-server-src-turns-verification-rs",
+      "sourceSha256": "translated-into-crates-minarbot-server-src-turns-verification-rs",
       "localPaths": [
-        "crates/briefsip-server/src/turns/verification.rs"
+        "crates/minarbot-server/src/turns/verification.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
@@ -235,7 +235,7 @@
     "Effect TaggedError": "plain discriminated record factories ConnectionTransientError/ConnectionBlockedError; message=detail",
     "ConnectionFailureFields": "ConnectionDiagnostics alias, retaining hop/via/failureCause/httpStatus/traceId",
     "ExecutionEnvironmentCapabilities": "only optional boolean threadRestartContinuation retained; native decoder drops unknown names",
-    "desktop-bootstrap": "briefsip-local-bootstrap; current caller authentication still required",
+    "desktop-bootstrap": "minarbot-local-bootstrap; current caller authentication still required",
     "Effect Git/checkpoint services": "plain async functions, execFile argument arrays and durable node:sqlite operation/checkpoint journals",
     "Effect ACP Scope/Deferred/Queue/Schema": "Node process ownership, bounded JSONL request Map, EventQueue, AbortSignal and structural guards; no Effect/ACP runtime dependency"
   },
@@ -246,7 +246,7 @@
         "UserMessageRow",
         "ACTIONS_REVEAL_CLASS_NAME"
       ],
-      "adaptation": "Right-aligned rounded human message and hover/focus metadata patterns, expressed with Briefsip CSS and existing task links; no T3 runtime dependencies.",
+      "adaptation": "Right-aligned rounded human message and hover/focus metadata patterns, expressed with Minarbot CSS and existing task links; no T3 runtime dependencies.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "9866b29c13e1850eb7112e69ba2933dcefe04be9b79d2bddba8a0668ba463357",
       "localPath": "app/src/App.tsx",
@@ -260,7 +260,7 @@
       "symbols": [
         "AssistantTimelineRow"
       ],
-      "adaptation": "Full-width unboxed answer and live-text presentation pattern using Briefsip safe Markdown renderer; provider/state logic stays native.",
+      "adaptation": "Full-width unboxed answer and live-text presentation pattern using Minarbot safe Markdown renderer; provider/state logic stays native.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "5b00daeafabfee1ae64965b71dd553b41d253afbb64ac5fb3579ed40e07e0793",
       "localPath": "app/src/App.tsx",
@@ -274,7 +274,7 @@
       "symbols": [
         "TurnFoldTimelineRow"
       ],
-      "adaptation": "Single muted activity disclosure above answer, using existing Radix Collapsible and Briefsip ordered activity list. Typography polish retains T3 muted text, compact gap and tabular duration; omits upstream full-width divider per #28. R6 renders duration as plain text when no work entries exist.",
+      "adaptation": "Single muted activity disclosure above answer, using existing Radix Collapsible and Minarbot ordered activity list. Typography polish retains T3 muted text, compact gap and tabular duration; omits upstream full-width divider per #28. R6 renders duration as plain text when no work entries exist.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "424113972c3053173506fc4d069e05b75e5f8ecde2c5bc283af2e4e154c902f4",
       "license": "MIT",
@@ -283,7 +283,7 @@
       "compatibilityCheck": "app/transcript.test.ts",
       "localPaths": [
         "app/src/ui/TurnActivity.tsx",
-        "app/src/ui/briefsip.css"
+        "app/src/ui/minarbot.css"
       ]
     },
     {
@@ -291,7 +291,7 @@
       "symbols": [
         "Worked for"
       ],
-      "adaptation": "Worked-for duration label pattern; Briefsip computes elapsed provider-ledger bounds and preserves interrupted/not-final semantics.",
+      "adaptation": "Worked-for duration label pattern; Minarbot computes elapsed provider-ledger bounds and preserves interrupted/not-final semantics.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "cf587ba8da847283d1aaf54d5a56d21090367f04ee02a971b06f8b4749d2e1a3",
       "localPath": "app/src/ui/transcript.ts",
@@ -316,7 +316,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Compact queue stack with Edit, Steer, Remove and Restart overflow; Briefsip durable APIs and held editor retained.",
+      "adaptation": "Compact queue stack with Edit, Steer, Remove and Restart overflow; Minarbot durable APIs and held editor retained.",
       "compatibilityCheck": "app/dispatch.test.ts; app/test-support/ui-smoke/run-controls-smoke.mjs"
     },
     {
@@ -334,7 +334,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Primary Stop while running; queued Send with content and Stop fixed at right; Briefsip CSS and API retained.",
+      "adaptation": "Primary Stop while running; queued Send with content and Stop fixed at right; Minarbot CSS and API retained.",
       "compatibilityCheck": "app/dispatch.test.ts; app/test-support/ui-smoke/run-controls-smoke.mjs"
     },
     {
@@ -350,7 +350,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Generation-scoped Stop targets captured Briefsip turn ID, with exact retry identity.",
+      "adaptation": "Generation-scoped Stop targets captured Minarbot turn ID, with exact retry identity.",
       "compatibilityCheck": "app/dispatch.test.ts; app/test-support/ui-smoke/run-controls-smoke.mjs"
     },
     {
@@ -412,7 +412,7 @@
       "symbols": [
         "consumeAvailablePairingLinkRow"
       ],
-      "adaptation": "Adapt atomic conditional UPDATE with unused/unexpired predicates to plain node:sqlite; Briefsip stores SHA-256 code hashes rather than raw credentials.",
+      "adaptation": "Adapt atomic conditional UPDATE with unused/unexpired predicates to plain node:sqlite; Minarbot stores SHA-256 code hashes rather than raw credentials.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "cb24cab1f180ce92450629c730619bb854fbd23684b20c765597c4d9a909363f",
       "localPath": "app/machines.ts",
@@ -456,7 +456,7 @@
       "symbols": [
         "EnvironmentRow"
       ],
-      "adaptation": "Adapt machine icon, truncated identity, route subtitle, status and action-column composition with existing Briefsip kit and Bot HQ tokens.",
+      "adaptation": "Adapt machine icon, truncated identity, route subtitle, status and action-column composition with existing Minarbot kit and Bot HQ tokens.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "8738f089abb8ae2d6e18624e39b0c95783a4c1f92d4e0f5d69428a73697d70d3",
       "localPath": "app/src/MachinesPanel.tsx",
@@ -471,7 +471,7 @@
         "subtitleText",
         "EnvironmentRow"
       ],
-      "adaptation": "Adapt per-environment status labels and origin-based rows; sidebar expands cached remote agents and opens read-only detail in Briefsip.",
+      "adaptation": "Adapt per-environment status labels and origin-based rows; sidebar expands cached remote agents and opens read-only detail in Minarbot.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "8783437ae080c0dcb05c10cf54eef4d78113740a567fbe68f7cfa5532e7860f1",
       "localPath": "app/src/MachinesPanel.tsx",
@@ -493,7 +493,7 @@
         "revokeProviderSession",
         "revokeAll"
       ],
-      "adaptation": "Translated secure-random 32-byte bearer issuance, SHA-256 lookup, caller binding and session revocation to native node:crypto/node:sqlite. Briefsip adds peer credentials, absolute TTL, run-end revocation and startup invalidation; no Effect or T3 runtime dependency.",
+      "adaptation": "Translated secure-random 32-byte bearer issuance, SHA-256 lookup, caller binding and session revocation to native node:crypto/node:sqlite. Minarbot adds peer credentials, absolute TTL, run-end revocation and startup invalidation; no Effect or T3 runtime dependency.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "324094b7befdfc2cf488d95a7393948ccec55ae63fafe8c281ccd27ee89c8345",
       "localPath": "app/t3/mcp-session-registry.ts",
@@ -511,7 +511,7 @@
         "writes",
         "actsAsCaller"
       ],
-      "adaptation": "Translated mandatory access declaration and checked-handler boundary into a scoped registry with SDK JSON-schema validation and authenticated caller arguments. Briefsip scopes and receipt preflight replace Effect layers and runtime-mode ceilings.",
+      "adaptation": "Translated mandatory access declaration and checked-handler boundary into a scoped registry with SDK JSON-schema validation and authenticated caller arguments. Minarbot scopes and receipt preflight replace Effect layers and runtime-mode ceilings.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "17a5a70ffa74153911e3092c4358a6e6d3dd3703d78512914434850df1250df1",
       "localPath": "app/t3/mcp-tool-access.ts",
@@ -526,7 +526,7 @@
         "makeMcpAuthMiddleware",
         "authenticateRequest"
       ],
-      "adaptation": "Translated bearer-per-request authentication before MCP tool dispatch, separate from browser authentication, and scoped invocation context. Briefsip uses the installed MCP SDK Streamable HTTP server with request-local transports, uniform denials, failed-auth throttling and its existing durable queue/history functions.",
+      "adaptation": "Translated bearer-per-request authentication before MCP tool dispatch, separate from browser authentication, and scoped invocation context. Minarbot uses the installed MCP SDK Streamable HTTP server with request-local transports, uniform denials, failed-auth throttling and its existing durable queue/history functions.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "bf29b7cbc2cfadfcf8e419873959c39bd50b4c59737dfab63dcd85006072feaf",
       "localPath": "app/mcp-server.ts",
@@ -548,7 +548,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt caller liveness and resource-boundary checks to Briefsip agents, current conversations and member projects; native Node/SQLite guards recheck access before writes and receipt replay.",
+      "adaptation": "Adapt caller liveness and resource-boundary checks to Minarbot agents, current conversations and member projects; native Node/SQLite guards recheck access before writes and receipt replay.",
       "compatibilityCheck": "app/mcp-feature-tools.test.ts"
     },
     {
@@ -564,7 +564,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt caller-namespaced metadata commands and stable results to durable request digests/plans/receipts; reuse Briefsip UI routes for validation, revisions and side effects.",
+      "adaptation": "Adapt caller-namespaced metadata commands and stable results to durable request digests/plans/receipts; reuse Minarbot UI routes for validation, revisions and side effects.",
       "compatibilityCheck": "app/mcp-feature-tools.test.ts"
     }
   ],
@@ -578,10 +578,10 @@
         "commit-tree",
         "update-ref"
       ],
-      "adaptation": "Temporary-index, stash-free working-tree capture and private checkpoint refs, translated from Effect into plain TypeScript. Raw blob capture includes untracked regular files; Briefsip adds binding boundaries, SQLite intent receipts, restore confirmation digests and conservative uncertain recovery.",
+      "adaptation": "Temporary-index, stash-free working-tree capture and private checkpoint refs, translated from Effect into plain TypeScript. Raw blob capture includes untracked regular files; Minarbot adds binding boundaries, SQLite intent receipts, restore confirmation digests and conservative uncertain recovery.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "f44227ab093c129d26d1a3898c583d74b3522bddc117af788cff9b8094323e88",
-      "localPath": "crates/briefsip-server/src/files/git_writes.rs",
+      "localPath": "crates/minarbot-server/src/files/git_writes.rs",
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
@@ -594,10 +594,10 @@
         "commit",
         "createWorktree"
       ],
-      "adaptation": "Local Git status, temporary-index commit and branch/worktree command patterns. Uses execFile argument arrays and local identity; Briefsip excludes remotes, disables hooks/filters/signing, bounds storage/output and records durable tool-call receipts.",
+      "adaptation": "Local Git status, temporary-index commit and branch/worktree command patterns. Uses execFile argument arrays and local identity; Minarbot excludes remotes, disables hooks/filters/signing, bounds storage/output and records durable tool-call receipts.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "2f14761316e748cf3e1059fe3969d57d899708b9edbba4f6aba7d648fd3d1b40",
-      "localPath": "crates/briefsip-server/src/files/git_writes.rs",
+      "localPath": "crates/minarbot-server/src/files/git_writes.rs",
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
@@ -613,7 +613,7 @@
       "adaptation": "Checkpoint lifecycle and before-turn restoration semantics adapted to node:sqlite and private refs, with 50-ref retention. No Effect services or T3 runtime dependency.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "a1b1a7f354011b329472d01b3b0d03c877a010e5eb7a27acb4e0f0eff406cf4a",
-      "localPath": "crates/briefsip-server/src/files/git_writes.rs",
+      "localPath": "crates/minarbot-server/src/files/git_writes.rs",
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
@@ -640,7 +640,7 @@
         "resolveCurrentWorkspaceLabel",
         "resolveEnvModeLabel"
       ],
-      "adaptation": "Local branch/worktree status display patterns adapted to Briefsip kit rows; no remote actions. Create pull request remains disabled with Not available yet.",
+      "adaptation": "Local branch/worktree status display patterns adapted to Minarbot kit rows; no remote actions. Create pull request remains disabled with Not available yet.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "bbc30bf2c91d0c59c15e35c4ab957dfe4e0bcfffdda2bfe992f393ae7dab3b5c",
       "localPath": "app/src/SourceControl.tsx",
@@ -654,7 +654,7 @@
       "symbols": [
         "DiffFileStatus"
       ],
-      "adaptation": "Changed-file status labels adapted to Briefsip kit list rows using porcelain status codes.",
+      "adaptation": "Changed-file status labels adapted to Minarbot kit list rows using porcelain status codes.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "5acfc301203da0c3be04aaa4814f46bae9ccdbb4a8c6324f5bf84b3d5a824c3a",
       "localPath": "app/src/SourceControl.tsx",
@@ -668,7 +668,7 @@
       "symbols": [
         "StyledDiffCodeView"
       ],
-      "adaptation": "Two line-number gutters, addition/deletion colors and viewer-local horizontal scrolling adapted to Briefsip tokens. No syntax-highlighting or diff-view package copied.",
+      "adaptation": "Two line-number gutters, addition/deletion colors and viewer-local horizontal scrolling adapted to Minarbot tokens. No syntax-highlighting or diff-view package copied.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "e707de894e7631a8500cfe134bfe40a99eb3f001b74d3ac3f36285d883bbbeb5",
       "localPath": "app/src/SourceControl.tsx",
@@ -786,7 +786,7 @@
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "a040202b8828016c94416da76ab587009512376ba9e4e55ea54b70a71e1a10ca",
       "localPaths": [
-        "crates/briefsip-server/src/harness/store.rs"
+        "crates/minarbot-server/src/harness/store.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
@@ -799,7 +799,7 @@
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "7d84a02ce0fd10cd6881f1ebd95d96d6981bf3d61a680a252222916a35401425",
       "localPaths": [
-        "crates/briefsip-server/src/harness/protocol.rs"
+        "crates/minarbot-server/src/harness/protocol.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
@@ -838,7 +838,7 @@
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "7134f392df696b0857982fd6587d528532a80d03c7d32369128d8524ef1f5731",
       "localPaths": [
-        "crates/briefsip-server/src/harness/store.rs"
+        "crates/minarbot-server/src/harness/store.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
@@ -864,7 +864,7 @@
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "e244293785ee9d973bfb01832df94a19ef647e8ab27044926a9ac9ef6ae2ee4e",
       "localPaths": [
-        "crates/briefsip-server/src/harness/store.rs"
+        "crates/minarbot-server/src/harness/store.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
@@ -877,7 +877,7 @@
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "60c08bad085be5f578365221d491904c19aa9e2c53bcdb0a85f1abfe063f2c8d",
       "localPaths": [
-        "crates/briefsip-server/src/harness/mod.rs"
+        "crates/minarbot-server/src/harness/mod.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
@@ -890,7 +890,7 @@
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "b024441f22f1e97e2a2f8baaa7dbb488c44c539d18cf57609aa564b61a28077a",
       "localPaths": [
-        "crates/briefsip-server/src/harness/store.rs"
+        "crates/minarbot-server/src/harness/store.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
@@ -903,7 +903,7 @@
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "7e0bdf7d706b47507b7aced7aa6e55f507f5fcef9e3ff4f49be142c70172e0ba",
       "localPaths": [
-        "crates/briefsip-server/src/harness/store.rs"
+        "crates/minarbot-server/src/harness/store.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
@@ -916,7 +916,7 @@
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "8c1fa982ce717bc320139bf2eedc50d398c727211a9521342d03181fa1eaee05",
       "localPaths": [
-        "crates/briefsip-server/src/harness/store.rs"
+        "crates/minarbot-server/src/harness/store.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
@@ -943,7 +943,7 @@
         "CodexRoutingConfig",
         "routesToNativeOpenai"
       ],
-      "adaptation": "Custom Responses model provider configuration adapted to saved Briefsip accounts and disposable session homes; credentials use env_key.",
+      "adaptation": "Custom Responses model provider configuration adapted to saved Minarbot accounts and disposable session homes; credentials use env_key.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "56ba0de0010948a2ef57ca8b17ff963f23a5581acfbf0a96fa69f81d049ecf03",
       "license": "MIT",
@@ -959,7 +959,7 @@
       "symbols": [
         "codexRuntimeModeTurnDefaults"
       ],
-      "adaptation": "Workspace-write/on-request user approval policy; Briefsip retains its own JSON-RPC adapter and approval receipts.",
+      "adaptation": "Workspace-write/on-request user approval policy; Minarbot retains its own JSON-RPC adapter and approval receipts.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "8571ac55de8200ba950e50d5cedce055ebb62ff16f14220d88335ca02cdc1ccf",
       "license": "MIT",
@@ -975,7 +975,7 @@
       "symbols": [
         "permissionModeForClaudeRuntimePolicy"
       ],
-      "adaptation": "Workspace edit auto-accept policy adapted through fail-closed Briefsip hooks; shell uses existing bwrap MCP runner, native Bash requires approval.",
+      "adaptation": "Workspace edit auto-accept policy adapted through fail-closed Minarbot hooks; shell uses existing bwrap MCP runner, native Bash requires approval.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "4f7f7861cd7100cf2a504ed313639da1d6a77185c9284bbd0601ef3c69ffe746",
       "license": "MIT",
@@ -996,7 +996,7 @@
         "cancelDelegatedTask"
       ],
       "sourceSha256": "1953abfb22164a93b918b3c4f55b71533416f0c9f5cfad81a7c837fea8fe4930",
-      "localPath": "crates/briefsip-server/src/turns/messaging.rs",
+      "localPath": "crates/minarbot-server/src/turns/messaging.rs",
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "adaptation": "Implemented durable completion wake and descendant cancellation in Rust and SQLite."
@@ -1010,7 +1010,7 @@
         "task_cancel"
       ],
       "sourceSha256": "ce9941d24795e63718c13e7c33dce637ac7af8914490173ab78dd4e04b8ca70b",
-      "localPath": "crates/briefsip-server/src/turns/messaging.rs",
+      "localPath": "crates/minarbot-server/src/turns/messaging.rs",
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "adaptation": "Translated tool contracts to local function tools."
@@ -1038,7 +1038,7 @@
         "delegate",
         "start"
       ],
-      "adaptation": "Durable peer reference with restart followers, bounded polling and existing Briefsip task completion receipts; uncertain sends are not replayed.",
+      "adaptation": "Durable peer reference with restart followers, bounded polling and existing Minarbot task completion receipts; uncertain sends are not replayed.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "716d81b9598bfeb4206bf834d93246c5830a6589e0b64e5a2f385016e56c7515",
       "localPath": "app/remote-agents.ts",
@@ -1089,7 +1089,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt same-agent fork lineage and ContextTransfer source cutoff to an immutable bounded portable transcript, native SQLite transaction and idempotent request receipt. Briefsip requires a completed text answer.",
+      "adaptation": "Adapt same-agent fork lineage and ContextTransfer source cutoff to an immutable bounded portable transcript, native SQLite transaction and idempotent request receipt. Minarbot requires a completed text answer.",
       "compatibilityCheck": "app/dispatch.test.ts; app/harness.test.ts; app/test-support/ui-smoke/smoke.mjs"
     },
     {
@@ -1103,7 +1103,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt response-level fork action and in-flight guard to Briefsip Radix Button, durable browser request identity and same-agent side-thread navigation.",
+      "adaptation": "Adapt response-level fork action and in-flight guard to Minarbot Radix Button, durable browser request identity and same-agent side-thread navigation.",
       "compatibilityCheck": "app/dispatch.test.ts; app/harness.test.ts; app/test-support/ui-smoke/smoke.mjs"
     },
     {
@@ -1130,10 +1130,10 @@
         "startTrial",
         "returnToPrevious"
       ],
-      "adaptation": "Translate durable request acceptance, immutable snapshot retention, trial selection, health deadline, rollback and restart recovery to a standalone Node launcher and private Unix socket. Briefsip uses workspaceSnapshot through a fenced offline worker, SHA-256 local releases, and an IPC activation gate; no Effect/runtime installer dependency.",
+      "adaptation": "Translate durable request acceptance, immutable snapshot retention, trial selection, health deadline, rollback and restart recovery to a standalone Node launcher and private Unix socket. Minarbot uses workspaceSnapshot through a fenced offline worker, SHA-256 local releases, and an IPC activation gate; no Effect/runtime installer dependency.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "44878720ffcc5141bbe8584a8cac96d4cfd673fea2f6ac0a01c785876a69ed54",
-      "localPath": "scripts/briefsip-launcher.mjs",
+      "localPath": "scripts/minarbot-launcher.mjs",
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
@@ -1144,7 +1144,7 @@
       "symbols": [
         "requestServerUpdate"
       ],
-      "adaptation": "Adapt server-to-launcher update requests and accepted-versus-committed correlation. Briefsip adds owner-only HTTP admission, bilateral scoped peer release transport, bounded fan-out and durable request IDs.",
+      "adaptation": "Adapt server-to-launcher update requests and accepted-versus-committed correlation. Minarbot adds owner-only HTTP admission, bilateral scoped peer release transport, bounded fan-out and durable request IDs.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "66f2a045c5697a01016af0f57896b3268e9ce904b34248668d480ad9657f4cfd",
       "localPath": "app/updates.ts",
@@ -1159,7 +1159,7 @@
         "UpdateEverythingDialog",
         "UpdateEverythingDialogContent"
       ],
-      "adaptation": "Adapt machine/version/running-work summary, restart warning, explicit confirmation and per-machine outcome tracking into Briefsip Radix kit and Bot HQ tokens. No T3 stylesheet or assets copied.",
+      "adaptation": "Adapt machine/version/running-work summary, restart warning, explicit confirmation and per-machine outcome tracking into Minarbot Radix kit and Bot HQ tokens. No T3 stylesheet or assets copied.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "f5248da6ebc68ed769981f67355099511422deeefd926e8cb3a1b423cf560fcc",
       "localPath": "app/src/UpdatesPanel.tsx",
@@ -1218,8 +1218,8 @@
         "_reset_per_turn_agent_state",
         "handle_max_iterations"
       ],
-      "adaptation": "Original TypeScript/SQLite per-task tool-step counter and wrap-up path. Budget survives automatic waits/requeues; explicit Resume/reassign starts a fresh attempt without clearing tool receipts. At exhaustion Briefsip makes exactly one tools-disabled provider call asking for progress, remaining work and a continue invitation. Unlike Hermes, Briefsip does not retry empty summaries and fails with a clear resumable message if wrap-up fails. Desktop context retains only the latest three screenshot images; attachment images retain their existing limits. No Hermes runtime dependency.",
-      "defaultDecision": "Pinned executable source uses sys.maxsize (unlimited) for AIAgent.max_iterations and resolve_turn_limit; docs and iteration_budget.py docstring still say 500. No finite Hermes default is authoritative at this revision. Briefsip uses Owner-requested finite fallback 90 and bounds profile input to 10-200.",
+      "adaptation": "Original TypeScript/SQLite per-task tool-step counter and wrap-up path. Budget survives automatic waits/requeues; explicit Resume/reassign starts a fresh attempt without clearing tool receipts. At exhaustion Minarbot makes exactly one tools-disabled provider call asking for progress, remaining work and a continue invitation. Unlike Hermes, Minarbot does not retry empty summaries and fails with a clear resumable message if wrap-up fails. Desktop context retains only the latest three screenshot images; attachment images retain their existing limits. No Hermes runtime dependency.",
+      "defaultDecision": "Pinned executable source uses sys.maxsize (unlimited) for AIAgent.max_iterations and resolve_turn_limit; docs and iteration_budget.py docstring still say 500. No finite Hermes default is authoritative at this revision. Minarbot uses Owner-requested finite fallback 90 and bounds profile input to 10-200.",
       "localPaths": [
         "app/server.ts",
         "app/shared/agent-template.ts",
@@ -1238,7 +1238,7 @@
       "symbols": [
         "RightPanelTabs"
       ],
-      "adaptation": "Adapt T3 icon-and-label overflow and selected-surface fallback to one Briefsip Radix row: Chats, Activity, Files, Computer. Files owns source-control and preview drill-downs. Labels remain visible at 360px.",
+      "adaptation": "Adapt T3 icon-and-label overflow and selected-surface fallback to one Minarbot Radix row: Chats, Activity, Files, Computer. Files owns source-control and preview drill-downs. Labels remain visible at 360px.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "de3aeb1ec4c7c10e5aefba9a7ca4a0514b10a3e41d11231359545ac683d2f0a3",
       "localPath": "app/src/RightPanel.tsx",
@@ -1252,7 +1252,7 @@
       "symbols": [
         "RightPanelSheet"
       ],
-      "adaptation": "Adapt T3 Radix sheet boundary for panels that would leave less than 640px of chat; preserve focus, Escape and backdrop dismissal. Computer defaults to half the window, with separate saved width. Briefsip keeps inline resizing on wider windows.",
+      "adaptation": "Adapt T3 Radix sheet boundary for panels that would leave less than 640px of chat; preserve focus, Escape and backdrop dismissal. Computer defaults to half the window, with separate saved width. Minarbot keeps inline resizing on wider windows.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "67a33d3e35cce125ab4caee3b0cdb250cc7db4d4e0709fb110ea2571829e7d29",
       "localPath": "app/src/RightPanel.tsx",
@@ -1266,7 +1266,7 @@
       "symbols": [
         "DiffPanel"
       ],
-      "adaptation": "Changed-file selection, M/U status badges, file heading with line counts and unified/split wrap control; hide Git transport headers. Briefsip workspaceGit API and usePolling retained.",
+      "adaptation": "Changed-file selection, M/U status badges, file heading with line counts and unified/split wrap control; hide Git transport headers. Minarbot workspaceGit API and usePolling retained.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "3a0a91c03f1c549fa9a45f97d0457fef1b614e60fde7a43fc5cdb30fcf4f6358",
       "localPath": "app/src/RightPanelDiff.tsx",
@@ -1280,7 +1280,7 @@
       "symbols": [
         "DiffPanelShell"
       ],
-      "adaptation": "Adapt panel-contained shell to Briefsip tokens; add responsive overlay sheet and one icon-and-label navigation row.",
+      "adaptation": "Adapt panel-contained shell to Minarbot tokens; add responsive overlay sheet and one icon-and-label navigation row.",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "a79e8c085fc3e37efb41eeaf233242dd15b5d9b6267558d9c05438f4f73bb866",
       "localPath": "app/src/right-panel.css",
@@ -1369,7 +1369,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt native every-prefix equivalence tests to Briefsip marked renderer; no upstream test framework dependency.",
+      "adaptation": "Adapt native every-prefix equivalence tests to Minarbot marked renderer; no upstream test framework dependency.",
       "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; app/provider-stream.test.ts; app/harness.test.ts; app/test-support/ui-smoke/stream-actions-smoke.mjs"
     },
     {
@@ -1385,7 +1385,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt clipboard action, copied check feedback, accessible tooltip and failure state to native Clipboard API and Briefsip Radix kit.",
+      "adaptation": "Adapt clipboard action, copied check feedback, accessible tooltip and failure state to native Clipboard API and Minarbot Radix kit.",
       "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; app/provider-stream.test.ts; app/harness.test.ts; app/test-support/ui-smoke/stream-actions-smoke.mjs"
     },
     {
@@ -1458,7 +1458,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt quiet inline work summary and grouped steps to Briefsip tokens, existing tool ledger and accessible disclosures.",
+      "adaptation": "Adapt quiet inline work summary and grouped steps to Minarbot tokens, existing tool ledger and accessible disclosures.",
       "compatibilityCheck": "app/markdown-stream-blocks.test.ts; app/turn-stream.test.ts; app/provider-stream.test.ts; app/harness.test.ts; app/test-support/ui-smoke/stream-actions-smoke.mjs"
     },
     {
@@ -1506,7 +1506,7 @@
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
-      "adaptation": "Adapt grouped icon-and-label navigation, filled active row, slash-to-search and keyboard result navigation to Briefsip in-memory settings IDs and semantic groups. Search filters existing destinations by all query words; no router or deep settings index copied.",
+      "adaptation": "Adapt grouped icon-and-label navigation, filled active row, slash-to-search and keyboard result navigation to Minarbot in-memory settings IDs and semantic groups. Search filters existing destinations by all query words; no router or deep settings index copied.",
       "dependencies": [],
       "compatibilityCheck": "app/test-support/ui-smoke/smoke.mjs"
     },
@@ -1523,7 +1523,7 @@
       ],
       "license": "MIT",
       "notice": "app/src/ui/NOTICE",
-      "adaptation": "Retain full-window navigation/content relationship and compact preference rows, composed with Briefsip Radix kit, tokens and existing preference logic. No app API, assets or CSS copied.",
+      "adaptation": "Retain full-window navigation/content relationship and compact preference rows, composed with Minarbot Radix kit, tokens and existing preference logic. No app API, assets or CSS copied.",
       "dependencies": [],
       "compatibilityCheck": "app/test-support/ui-smoke/smoke.mjs"
     }
@@ -1570,7 +1570,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt generous sidebar maximum and bounded preferred width; reserve right-panel minimum when open. Keep Briefsip accessible keyboard resize and double-click reset.",
+      "adaptation": "Adapt generous sidebar maximum and bounded preferred width; reserve right-panel minimum when open. Keep Minarbot accessible keyboard resize and double-click reset.",
       "compatibilityCheck": "app/presentation.test.ts; app/right-panel-state.test.ts; app/test-support/ui-smoke/smoke.mjs"
     }
   ],
@@ -1587,7 +1587,7 @@
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
-      "adaptation": "Behavior reference for whole-row folder disclosure, aria-expanded, inset keyboard focus and independent row actions. Original Briefsip Radix Collapsible implementation uses open/closed Lucide folder icons without a leading or trailing chevron, adds Left/Right arrows, and retains Briefsip persistence, project settings menu and density tokens. No upstream application code copied.",
+      "adaptation": "Behavior reference for whole-row folder disclosure, aria-expanded, inset keyboard focus and independent row actions. Original Minarbot Radix Collapsible implementation uses open/closed Lucide folder icons without a leading or trailing chevron, adds Left/Right arrows, and retains Minarbot persistence, project settings menu and density tokens. No upstream application code copied.",
       "dependencies": [],
       "compatibilityCheck": "app/test-support/ui-smoke/sidebar-spacing-smoke.mjs"
     }
@@ -1611,7 +1611,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt rounded image tiles with hover/focus removal, compact typed file chips with size, wrapped attachment strips, sent/Library galleries and keyboard-accessible image expansion to Briefsip Radix kit and tokens. Adapt classification and boundary-test patterns; only existing PNG/JPEG/WebP image previews admitted. Existing byte detection supplies an additive image boolean on scoped metadata/receipts and sent-file references, including extensionless images. Original upload journal, scope URLs, provider checks and sandboxed HTML/text previews retained. No T3 upload store, asset URL service, runtime or new dependency copied.",
+      "adaptation": "Adapt rounded image tiles with hover/focus removal, compact typed file chips with size, wrapped attachment strips, sent/Library galleries and keyboard-accessible image expansion to Minarbot Radix kit and tokens. Adapt classification and boundary-test patterns; only existing PNG/JPEG/WebP image previews admitted. Existing byte detection supplies an additive image boolean on scoped metadata/receipts and sent-file references, including extensionless images. Original upload journal, scope URLs, provider checks and sandboxed HTML/text previews retained. No T3 upload store, asset URL service, runtime or new dependency copied.",
       "compatibilityCheck": "app/attachments.test.ts; app/image-attachment.test.ts; app/test-support/ui-smoke/smoke.mjs (AT1)"
     },
     {
@@ -1632,7 +1632,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt rounded image tiles with hover/focus removal, compact typed file chips with size, wrapped attachment strips, sent/Library galleries and keyboard-accessible image expansion to Briefsip Radix kit and tokens. Adapt classification and boundary-test patterns; only existing PNG/JPEG/WebP image previews admitted. Existing byte detection supplies an additive image boolean on scoped metadata/receipts and sent-file references, including extensionless images. Original upload journal, scope URLs, provider checks and sandboxed HTML/text previews retained. No T3 upload store, asset URL service, runtime or new dependency copied.",
+      "adaptation": "Adapt rounded image tiles with hover/focus removal, compact typed file chips with size, wrapped attachment strips, sent/Library galleries and keyboard-accessible image expansion to Minarbot Radix kit and tokens. Adapt classification and boundary-test patterns; only existing PNG/JPEG/WebP image previews admitted. Existing byte detection supplies an additive image boolean on scoped metadata/receipts and sent-file references, including extensionless images. Original upload journal, scope URLs, provider checks and sandboxed HTML/text previews retained. No T3 upload store, asset URL service, runtime or new dependency copied.",
       "compatibilityCheck": "app/attachments.test.ts; app/image-attachment.test.ts; app/test-support/ui-smoke/smoke.mjs (AT1)"
     },
     {
@@ -1653,7 +1653,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt rounded image tiles with hover/focus removal, compact typed file chips with size, wrapped attachment strips, sent/Library galleries and keyboard-accessible image expansion to Briefsip Radix kit and tokens. Adapt classification and boundary-test patterns; only existing PNG/JPEG/WebP image previews admitted. Existing byte detection supplies an additive image boolean on scoped metadata/receipts and sent-file references, including extensionless images. Original upload journal, scope URLs, provider checks and sandboxed HTML/text previews retained. No T3 upload store, asset URL service, runtime or new dependency copied.",
+      "adaptation": "Adapt rounded image tiles with hover/focus removal, compact typed file chips with size, wrapped attachment strips, sent/Library galleries and keyboard-accessible image expansion to Minarbot Radix kit and tokens. Adapt classification and boundary-test patterns; only existing PNG/JPEG/WebP image previews admitted. Existing byte detection supplies an additive image boolean on scoped metadata/receipts and sent-file references, including extensionless images. Original upload journal, scope URLs, provider checks and sandboxed HTML/text previews retained. No T3 upload store, asset URL service, runtime or new dependency copied.",
       "compatibilityCheck": "app/attachments.test.ts; app/image-attachment.test.ts; app/test-support/ui-smoke/smoke.mjs (AT1)"
     },
     {
@@ -1674,7 +1674,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt rounded image tiles with hover/focus removal, compact typed file chips with size, wrapped attachment strips, sent/Library galleries and keyboard-accessible image expansion to Briefsip Radix kit and tokens. Adapt classification and boundary-test patterns; only existing PNG/JPEG/WebP image previews admitted. Existing byte detection supplies an additive image boolean on scoped metadata/receipts and sent-file references, including extensionless images. Original upload journal, scope URLs, provider checks and sandboxed HTML/text previews retained. No T3 upload store, asset URL service, runtime or new dependency copied.",
+      "adaptation": "Adapt rounded image tiles with hover/focus removal, compact typed file chips with size, wrapped attachment strips, sent/Library galleries and keyboard-accessible image expansion to Minarbot Radix kit and tokens. Adapt classification and boundary-test patterns; only existing PNG/JPEG/WebP image previews admitted. Existing byte detection supplies an additive image boolean on scoped metadata/receipts and sent-file references, including extensionless images. Original upload journal, scope URLs, provider checks and sandboxed HTML/text previews retained. No T3 upload store, asset URL service, runtime or new dependency copied.",
       "compatibilityCheck": "app/attachments.test.ts; app/image-attachment.test.ts; app/test-support/ui-smoke/smoke.mjs (AT1)"
     },
     {
@@ -1695,7 +1695,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt rounded image tiles with hover/focus removal, compact typed file chips with size, wrapped attachment strips, sent/Library galleries and keyboard-accessible image expansion to Briefsip Radix kit and tokens. Adapt classification and boundary-test patterns; only existing PNG/JPEG/WebP image previews admitted. Existing byte detection supplies an additive image boolean on scoped metadata/receipts and sent-file references, including extensionless images. Original upload journal, scope URLs, provider checks and sandboxed HTML/text previews retained. No T3 upload store, asset URL service, runtime or new dependency copied.",
+      "adaptation": "Adapt rounded image tiles with hover/focus removal, compact typed file chips with size, wrapped attachment strips, sent/Library galleries and keyboard-accessible image expansion to Minarbot Radix kit and tokens. Adapt classification and boundary-test patterns; only existing PNG/JPEG/WebP image previews admitted. Existing byte detection supplies an additive image boolean on scoped metadata/receipts and sent-file references, including extensionless images. Original upload journal, scope URLs, provider checks and sandboxed HTML/text previews retained. No T3 upload store, asset URL service, runtime or new dependency copied.",
       "compatibilityCheck": "app/attachments.test.ts; app/image-attachment.test.ts; app/test-support/ui-smoke/smoke.mjs (AT1)"
     },
     {
@@ -1716,7 +1716,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt rounded image tiles with hover/focus removal, compact typed file chips with size, wrapped attachment strips, sent/Library galleries and keyboard-accessible image expansion to Briefsip Radix kit and tokens. Adapt classification and boundary-test patterns; only existing PNG/JPEG/WebP image previews admitted. Existing byte detection supplies an additive image boolean on scoped metadata/receipts and sent-file references, including extensionless images. Original upload journal, scope URLs, provider checks and sandboxed HTML/text previews retained. No T3 upload store, asset URL service, runtime or new dependency copied.",
+      "adaptation": "Adapt rounded image tiles with hover/focus removal, compact typed file chips with size, wrapped attachment strips, sent/Library galleries and keyboard-accessible image expansion to Minarbot Radix kit and tokens. Adapt classification and boundary-test patterns; only existing PNG/JPEG/WebP image previews admitted. Existing byte detection supplies an additive image boolean on scoped metadata/receipts and sent-file references, including extensionless images. Original upload journal, scope URLs, provider checks and sandboxed HTML/text previews retained. No T3 upload store, asset URL service, runtime or new dependency copied.",
       "compatibilityCheck": "app/attachments.test.ts; app/image-attachment.test.ts; app/test-support/ui-smoke/smoke.mjs (AT1)"
     }
   ],
@@ -1732,13 +1732,13 @@
       "localPaths": [
         "app/src/ui/ChatPrimitives.tsx",
         "app/src/ui/chat.css",
-        "app/src/ui/briefsip.css",
+        "app/src/ui/minarbot.css",
         "app/src/ui/density.css"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "80% right-aligned user lane, 16px rounded bubble, 12px padding, hover/focus metadata; preserved Briefsip attachments and command controls.",
+      "adaptation": "80% right-aligned user lane, 16px rounded bubble, 12px padding, hover/focus metadata; preserved Minarbot attachments and command controls.",
       "compatibilityCheck": "app/markdown.test.ts; app/test-support/chat-like-t3/capture.mjs; app/test-support/ui-smoke/smoke.mjs"
     },
     {
@@ -1751,13 +1751,13 @@
       ],
       "localPaths": [
         "app/src/ui/chat.css",
-        "app/src/ui/briefsip.css",
+        "app/src/ui/minarbot.css",
         "app/src/App.tsx"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Unboxed answers with 4px horizontal/2px vertical inset, 12px metadata, 24px icon actions and 200ms reveal. Briefsip room speaker headers retained.",
+      "adaptation": "Unboxed answers with 4px horizontal/2px vertical inset, 12px metadata, 24px icon actions and 200ms reveal. Minarbot room speaker headers retained.",
       "compatibilityCheck": "app/markdown.test.ts; app/test-support/chat-like-t3/capture.mjs; app/test-support/ui-smoke/smoke.mjs"
     },
     {
@@ -1770,13 +1770,13 @@
       ],
       "localPaths": [
         "app/src/ui/TurnActivity.tsx",
-        "app/src/ui/briefsip.css",
+        "app/src/ui/minarbot.css",
         "app/src/ui/density.css"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "16px message-row spacing and quiet work-log disclosure; provider-ledger duration and existing Briefsip activity semantics retained. Borderless work summary retained from #28. R6 renders duration as plain text when no work entries exist.",
+      "adaptation": "16px message-row spacing and quiet work-log disclosure; provider-ledger duration and existing Minarbot activity semantics retained. Borderless work summary retained from #28. R6 renders duration as plain text when no work entries exist.",
       "compatibilityCheck": "app/markdown.test.ts; app/test-support/chat-like-t3/capture.mjs; app/test-support/ui-smoke/smoke.mjs"
     },
     {
@@ -1789,7 +1789,7 @@
       ],
       "localPaths": [
         "app/src/ui/TurnActivity.tsx",
-        "app/src/ui/briefsip.css"
+        "app/src/ui/minarbot.css"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
@@ -1808,7 +1808,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Tool/commentary row visual hierarchy translated to Briefsip tool names and safe Markdown; original routing, approvals and task links retained.",
+      "adaptation": "Tool/commentary row visual hierarchy translated to Minarbot tool names and safe Markdown; original routing, approvals and task links retained.",
       "compatibilityCheck": "app/markdown.test.ts; app/test-support/chat-like-t3/capture.mjs; app/test-support/ui-smoke/smoke.mjs"
     },
     {
@@ -1844,7 +1844,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "16px surface radius, 1px outline and small light-mode shadow; neutral Briefsip surfaces instead of upstream glass/theme runtime. R6 retains neutral focus border without an outer accent ring.",
+      "adaptation": "16px surface radius, 1px outline and small light-mode shadow; neutral Minarbot surfaces instead of upstream glass/theme runtime. R6 retains neutral focus border without an outer accent ring.",
       "compatibilityCheck": "app/markdown.test.ts; app/test-support/chat-like-t3/capture.mjs; app/test-support/ui-smoke/smoke.mjs"
     },
     {
@@ -1872,7 +1872,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "32px round primary send control; existing native Briefsip button behavior retained.",
+      "adaptation": "32px round primary send control; existing native Minarbot button behavior retained.",
       "compatibilityCheck": "app/markdown.test.ts; app/test-support/chat-like-t3/capture.mjs; app/test-support/ui-smoke/smoke.mjs"
     },
     {
@@ -1920,7 +1920,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "46rem default lane mapped to fixed 736px across text preferences; 14px relaxed prose (1.625), heading scale, .65rem block rhythm, inline code, quote and row-separated table metrics. Colors map to Briefsip semantic tokens; no Tailwind dependency.",
+      "adaptation": "46rem default lane mapped to fixed 736px across text preferences; 14px relaxed prose (1.625), heading scale, .65rem block rhythm, inline code, quote and row-separated table metrics. Colors map to Minarbot semantic tokens; no Tailwind dependency.",
       "compatibilityCheck": "app/markdown.test.ts; app/test-support/chat-like-t3/capture.mjs; app/test-support/ui-smoke/smoke.mjs"
     }
   ],
@@ -1957,7 +1957,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Briefsip turns replace T3 message rows; one tick per human room root, final room reply or current partial, no peer/subtask/routine ticks. Reuse installed marked and entities from Briefsip Markdown rather than remark; raw HTML stays inert source text as in Briefsip.",
+      "adaptation": "Minarbot turns replace T3 message rows; one tick per human room root, final room reply or current partial, no peer/subtask/routine ticks. Reuse installed marked and entities from Minarbot Markdown rather than remark; raw HTML stays inert source text as in Minarbot.",
       "compatibilityCheck": "app/timeline-minimap.test.ts; app/test-support/ui-smoke/timeline-minimap-smoke.mjs"
     },
     {
@@ -2016,7 +2016,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Release Briefsip follow before minimap jump/wheel via existing nearBottom ref; preserve jump-to-latest and native scroll listener.",
+      "adaptation": "Release Minarbot follow before minimap jump/wheel via existing nearBottom ref; preserve jump-to-latest and native scroll listener.",
       "compatibilityCheck": "app/timeline-minimap.test.ts; app/test-support/ui-smoke/timeline-minimap-smoke.mjs"
     },
     {
@@ -2048,7 +2048,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Preserve preview surface/elevation role and overlay stacking with Briefsip theme tokens and existing popover shadow; no added glass theme or Tailwind dependency.",
+      "adaptation": "Preserve preview surface/elevation role and overlay stacking with Minarbot theme tokens and existing popover shadow; no added glass theme or Tailwind dependency.",
       "compatibilityCheck": "app/timeline-minimap.test.ts; app/test-support/ui-smoke/timeline-minimap-smoke.mjs"
     },
     {
@@ -2065,7 +2065,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Port attachment-only and preview normalization coverage to node:test using Briefsip empty attachment prompts and Markdown links; add room roots, streaming, peer/routine exclusions and rail geometry.",
+      "adaptation": "Port attachment-only and preview normalization coverage to node:test using Minarbot empty attachment prompts and Markdown links; add room roots, streaming, peer/routine exclusions and rail geometry.",
       "compatibilityCheck": "app/timeline-minimap.test.ts; app/test-support/ui-smoke/timeline-minimap-smoke.mjs"
     },
     {
@@ -2101,7 +2101,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt compact find bar, native CSS Highlight ranges, match count, previous/next and Escape. Briefsip uses its existing history pages, Markdown DOM and kit controls; no T3 store or virtualizer.",
+      "adaptation": "Adapt compact find bar, native CSS Highlight ranges, match count, previous/next and Escape. Minarbot uses its existing history pages, Markdown DOM and kit controls; no T3 store or virtualizer.",
       "compatibilityCheck": "app/message-find.test.ts; app/test-support/ui-smoke/smoke.mjs"
     },
     {
@@ -2119,7 +2119,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt compact find bar, native CSS Highlight ranges, match count, previous/next and Escape. Briefsip uses its existing history pages, Markdown DOM and kit controls; no T3 store or virtualizer.",
+      "adaptation": "Adapt compact find bar, native CSS Highlight ranges, match count, previous/next and Escape. Minarbot uses its existing history pages, Markdown DOM and kit controls; no T3 store or virtualizer.",
       "compatibilityCheck": "app/message-find.test.ts; app/test-support/ui-smoke/smoke.mjs"
     }
   ],
@@ -2139,7 +2139,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Search-first modal palette, grouped destinations, arrow selection, Escape and focus return using existing Radix dialog and native input. Briefsip navigation and conversation fetching; no Zustand or cmdk dependency.",
+      "adaptation": "Search-first modal palette, grouped destinations, arrow selection, Escape and focus return using existing Radix dialog and native input. Minarbot navigation and conversation fetching; no Zustand or cmdk dependency.",
       "compatibilityCheck": "app/test-support/ux-navigation/check.mjs"
     },
     {
@@ -2158,7 +2158,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Search-first modal palette, grouped destinations, arrow selection, Escape and focus return using existing Radix dialog and native input. Briefsip navigation and conversation fetching; no Zustand or cmdk dependency.",
+      "adaptation": "Search-first modal palette, grouped destinations, arrow selection, Escape and focus return using existing Radix dialog and native input. Minarbot navigation and conversation fetching; no Zustand or cmdk dependency.",
       "compatibilityCheck": "app/test-support/ux-navigation/check.mjs"
     }
   ],
@@ -2178,7 +2178,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt compact ghost Send now, pencil and remove actions, tooltips, bounded queue expansion and inline editing; Briefsip uses expiring fenced edit leases and existing durable restart dispatch.",
+      "adaptation": "Adapt compact ghost Send now, pencil and remove actions, tooltips, bounded queue expansion and inline editing; Minarbot uses expiring fenced edit leases and existing durable restart dispatch.",
       "compatibilityCheck": "app/optimistic-turns.test.ts; app/queue-edits.test.ts; app/audio-recording.test.ts; app/test-support/ui-smoke/run-controls-smoke.mjs; app/test-support/ux-r3-composer/check.mjs"
     },
     {
@@ -2195,7 +2195,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt immediate local insertion and reconciliation by message id to Briefsip turn snapshots; retain pending turns across stale polls, preserve queue placement, and show Working immediately.",
+      "adaptation": "Adapt immediate local insertion and reconciliation by message id to Minarbot turn snapshots; retain pending turns across stale polls, preserve queue placement, and show Working immediately.",
       "compatibilityCheck": "app/optimistic-turns.test.ts; app/queue-edits.test.ts; app/audio-recording.test.ts; app/test-support/ui-smoke/run-controls-smoke.mjs; app/test-support/ux-r3-composer/check.mjs"
     },
     {
@@ -2233,7 +2233,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt fixed top offset and borderless search chrome to existing Radix palette; reuse Briefsip avatars, page icons and frame queue for navigation focus.",
+      "adaptation": "Adapt fixed top offset and borderless search chrome to existing Radix palette; reuse Minarbot avatars, page icons and frame queue for navigation focus.",
       "compatibilityCheck": "app/test-support/ui-smoke/polish-smoke.mjs"
     },
     {
@@ -2267,7 +2267,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Compact named file rows with size metadata; Briefsip keeps image thumbnails and filenames in the same chip in transcript and Files.",
+      "adaptation": "Compact named file rows with size metadata; Minarbot keeps image thumbnails and filenames in the same chip in transcript and Files.",
       "compatibilityCheck": "app/test-support/ui-smoke/polish-smoke.mjs"
     }
   ],
@@ -2286,7 +2286,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Preserve interrupted assistant text under stopped activity headers; Briefsip keeps its own persisted partial snapshots and room lifecycle.",
+      "adaptation": "Preserve interrupted assistant text under stopped activity headers; Minarbot keeps its own persisted partial snapshots and room lifecycle.",
       "compatibilityCheck": "app/transcript.test.ts; app/queue-edits.test.ts; app/test-support/ui-smoke/run-controls-smoke.mjs; app/test-support/ux-r4-chat/check.mjs"
     },
     {
@@ -2303,7 +2303,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Retain inline editor with composer Enter, Shift+Enter and Escape bindings, blur save and exact-id reload recovery using Briefsip fenced edit leases.",
+      "adaptation": "Retain inline editor with composer Enter, Shift+Enter and Escape bindings, blur save and exact-id reload recovery using Minarbot fenced edit leases.",
       "compatibilityCheck": "app/transcript.test.ts; app/queue-edits.test.ts; app/test-support/ui-smoke/run-controls-smoke.mjs; app/test-support/ux-r4-chat/check.mjs"
     }
   ],
@@ -2362,7 +2362,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt identity-based conversation URLs and browser history with native History API; Briefsip validates its own agents, threads, projects and rooms. Settings routes preserve their return destination. No TanStack dependency or T3 state store.",
+      "adaptation": "Adapt identity-based conversation URLs and browser history with native History API; Minarbot validates its own agents, threads, projects and rooms. Settings routes preserve their return destination. No TanStack dependency or T3 state store.",
       "compatibilityCheck": "app/navigation.test.ts; app/csp.test.ts; app/dispatch.test.ts; app/test-support/ux-r5-chat/check.mjs"
     },
     {
@@ -2378,7 +2378,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt one-click untitled conversation creation and composer focus; Briefsip creates a durable thread using existing retry-safe commands and names it from its first text.",
+      "adaptation": "Adapt one-click untitled conversation creation and composer focus; Minarbot creates a durable thread using existing retry-safe commands and names it from its first text.",
       "compatibilityCheck": "app/navigation.test.ts; app/csp.test.ts; app/dispatch.test.ts; app/test-support/ux-r5-chat/check.mjs"
     },
     {
@@ -2396,7 +2396,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt inline rename, trim validation and Escape cancel through Briefsip conversation revisions and existing Radix-styled controls; no native validation bubbles.",
+      "adaptation": "Adapt inline rename, trim validation and Escape cancel through Minarbot conversation revisions and existing Radix-styled controls; no native validation bubbles.",
       "compatibilityCheck": "app/navigation.test.ts; app/csp.test.ts; app/dispatch.test.ts; app/test-support/ux-r5-chat/check.mjs"
     }
   ],
@@ -2416,7 +2416,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt Ctrl/Cmd+Shift+O chat.new binding, tooltip and palette entry to Briefsip conversation creation; dialogs retain keyboard ownership.",
+      "adaptation": "Adapt Ctrl/Cmd+Shift+O chat.new binding, tooltip and palette entry to Minarbot conversation creation; dialogs retain keyboard ownership.",
       "compatibilityCheck": "app/test-support/ux-r6/check.mjs"
     }
   ],
@@ -2430,13 +2430,13 @@
         "t3AcpPromptWithInstructions"
       ],
       "localPaths": [
-        "crates/briefsip-server/src/turns/instructions.json",
-        "crates/briefsip-server/src/harness/store.rs"
+        "crates/minarbot-server/src/turns/instructions.json",
+        "crates/minarbot-server/src/harness/store.rs"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt compact app guidance, active-tool filtering and ACP context blocks to Briefsip tools and trust boundaries; no T3 orchestration runtime.",
+      "adaptation": "Adapt compact app guidance, active-tool filtering and ACP context blocks to Minarbot tools and trust boundaries; no T3 orchestration runtime.",
       "compatibilityCheck": "Rust base_guidance_names_only_enabled_tools and codex_context_chunks_preserve_multibyte_text; app/harness.test.ts; app/acp-harness.test.ts"
     },
     {
@@ -2447,12 +2447,12 @@
         "buildRuntimeInstructions"
       ],
       "localPaths": [
-        "crates/briefsip-server/src/turns/instructions.json"
+        "crates/minarbot-server/src/turns/instructions.json"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt runtime identity and inline Markdown file links to Briefsip file URLs; Briefsip extends the app guidance with bounded verification, request review and work-log evidence.",
+      "adaptation": "Adapt runtime identity and inline Markdown file links to Minarbot file URLs; Minarbot extends the app guidance with bounded verification, request review and work-log evidence.",
       "compatibilityCheck": "Rust base_guidance_names_only_enabled_tools and codex_context_chunks_preserve_multibyte_text; app/harness.test.ts; app/acp-harness.test.ts; app/self-verification.test.ts; app/navigation.test.ts"
     },
     {
@@ -2465,7 +2465,7 @@
       ],
       "localPaths": [
         "app/test-support/additional-context.ts",
-        "crates/briefsip-server/src/harness/store.rs",
+        "crates/minarbot-server/src/harness/store.rs",
         "app/harness.ts",
         "app/harness-store.ts"
       ],
@@ -2481,9 +2481,9 @@
         "baseInstructions"
       ],
       "sourceRevision": "local-node-frozen",
-      "sourceSha256": "translated-into-crates-briefsip-server-src-turns-instructions-json",
+      "sourceSha256": "translated-into-crates-minarbot-server-src-turns-instructions-json",
       "localPaths": [
-        "crates/briefsip-server/src/turns/instructions.json"
+        "crates/minarbot-server/src/turns/instructions.json"
       ],
       "license": "MIT",
       "notice": "app/t3/NOTICE",
@@ -2497,55 +2497,55 @@
       "sourcePath": "packages/effect-codex-app-server/src/protocol.ts",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "7a75263f6c86882c054bc3962274e525849ac89af26c2266aa7da9407070ebc8",
-      "localPath": "crates/briefsip-server/src/harness/store.rs",
+      "localPath": "crates/minarbot-server/src/harness/store.rs",
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Rust protocol and access-control translation from existing Briefsip TypeScript adaptation; no upstream runtime dependency.",
+      "adaptation": "Rust protocol and access-control translation from existing Minarbot TypeScript adaptation; no upstream runtime dependency.",
       "compatibilityCheck": "app/rust-harness.test.ts"
     },
     {
       "sourcePath": "packages/provider-acp/src/server/AcpSessionRuntime.ts",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "a040202b8828016c94416da76ab587009512376ba9e4e55ea54b70a71e1a10ca",
-      "localPath": "crates/briefsip-server/src/harness/protocol.rs",
+      "localPath": "crates/minarbot-server/src/harness/protocol.rs",
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Rust protocol and access-control translation from existing Briefsip TypeScript adaptation; no upstream runtime dependency.",
+      "adaptation": "Rust protocol and access-control translation from existing Minarbot TypeScript adaptation; no upstream runtime dependency.",
       "compatibilityCheck": "app/rust-harness.test.ts"
     },
     {
       "sourcePath": "apps/server/src/os-jank.ts",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "6237f38007d2e49fea28d73485d6d4b9afa22646e911f360ad62b7c06faa7281",
-      "localPath": "crates/briefsip-server/src/harness/process.rs",
+      "localPath": "crates/minarbot-server/src/harness/process.rs",
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Rust protocol and access-control translation from existing Briefsip TypeScript adaptation; no upstream runtime dependency.",
+      "adaptation": "Rust protocol and access-control translation from existing Minarbot TypeScript adaptation; no upstream runtime dependency.",
       "compatibilityCheck": "app/rust-harness.test.ts"
     },
     {
       "sourcePath": "apps/server/src/mcp/McpSessionRegistry.ts",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "324094b7befdfc2cf488d95a7393948ccec55ae63fafe8c281ccd27ee89c8345",
-      "localPath": "crates/briefsip-server/src/mcp/registry.rs",
+      "localPath": "crates/minarbot-server/src/mcp/registry.rs",
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Rust protocol and access-control translation from existing Briefsip TypeScript adaptation; no upstream runtime dependency.",
+      "adaptation": "Rust protocol and access-control translation from existing Minarbot TypeScript adaptation; no upstream runtime dependency.",
       "compatibilityCheck": "app/rust-harness.test.ts"
     },
     {
       "sourcePath": "apps/server/src/mcp/threadAccess.ts",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "ab252a9aaed7035e17ef0d5ec52cf7a34b240ebafbc53085e9ab9b096553839a",
-      "localPath": "crates/briefsip-server/src/mcp/features.rs",
+      "localPath": "crates/minarbot-server/src/mcp/features.rs",
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Rust protocol and access-control translation from existing Briefsip TypeScript adaptation; no upstream runtime dependency.",
+      "adaptation": "Rust protocol and access-control translation from existing Minarbot TypeScript adaptation; no upstream runtime dependency.",
       "compatibilityCheck": "app/rust-harness.test.ts"
     },
     {
@@ -2555,19 +2555,19 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Embeds existing MIT-adapted Briefsip Pi permission and MCP extension in disposable runtime directory.",
+      "adaptation": "Embeds existing MIT-adapted Minarbot Pi permission and MCP extension in disposable runtime directory.",
       "compatibilityCheck": "app/acp-harness.test.ts",
-      "localPath": "crates/briefsip-server/src/harness/store.rs"
+      "localPath": "crates/minarbot-server/src/harness/store.rs"
     },
     {
       "sourcePath": "packages/effect-codex-app-server/src/protocol.ts",
       "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "7a75263f6c86882c054bc3962274e525849ac89af26c2266aa7da9407070ebc8",
-      "localPath": "crates/briefsip-server/src/harness/protocol.rs",
+      "localPath": "crates/minarbot-server/src/harness/protocol.rs",
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Rust translation of the existing Briefsip Codex form-elicitation policy and protocol checks; one-time forms remain session-bound.",
+      "adaptation": "Rust translation of the existing Minarbot Codex form-elicitation policy and protocol checks; one-time forms remain session-bound.",
       "compatibilityCheck": "app/rust-harness.test.ts"
     }
   ],
@@ -2586,7 +2586,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Render availability and run outcomes in the Briefsip sidebar using kit controls.",
+      "adaptation": "Render availability and run outcomes in the Minarbot sidebar using kit controls.",
       "compatibilityCheck": "app/updateEverything.logic.test.ts"
     },
     {
@@ -2603,7 +2603,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Keep one machine row, running-work warning, release version and explicit confirmation with Briefsip Radix Dialog.",
+      "adaptation": "Keep one machine row, running-work warning, release version and explicit confirmation with Minarbot Radix Dialog.",
       "compatibilityCheck": "app/updateEverything.logic.test.ts"
     },
     {
@@ -2619,7 +2619,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt update orchestration to Briefsip HTTP polling, submitting paired machines before restarting the connected server.",
+      "adaptation": "Adapt update orchestration to Minarbot HTTP polling, submitting paired machines before restarting the connected server.",
       "compatibilityCheck": "app/updateEverything.logic.test.ts"
     },
     {
@@ -2657,7 +2657,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Port eligible and skipped machine assertions, restarting-work counts, ordering and capsule outcome checks to Node test and Briefsip models.",
+      "adaptation": "Port eligible and skipped machine assertions, restarting-work counts, ordering and capsule outcome checks to Node test and Minarbot models.",
       "compatibilityCheck": "app/updateEverything.logic.test.ts"
     },
     {
@@ -2674,7 +2674,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Adapt saved run and receipt recovery to same-tab reloads and Briefsip idempotent command bodies.",
+      "adaptation": "Adapt saved run and receipt recovery to same-tab reloads and Minarbot idempotent command bodies.",
       "compatibilityCheck": "app/updateEverything.logic.test.ts"
     },
     {
@@ -2690,7 +2690,7 @@
       "license": "MIT",
       "notice": "app/t3/NOTICE",
       "dependencies": [],
-      "adaptation": "Show target release notes in an optional disclosure using the Briefsip feed and kit.",
+      "adaptation": "Show target release notes in an optional disclosure using the Minarbot feed and kit.",
       "compatibilityCheck": "app/updateEverything.logic.test.ts"
     }
   ]

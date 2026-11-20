@@ -10,7 +10,7 @@ import { startApp } from './test-bridge.ts';
 import { validateWorkflow } from './src/workflows.ts';
 
 test('parallel workflow joins once in branch order, retains failures and cancels all branches', async t => {
-  const dir=mkdtempSync(join(tmpdir(),'briefsip-parallel-'));
+  const dir=mkdtempSync(join(tmpdir(),'minarbot-parallel-'));
   const held=new Map<string,ServerResponse>(), calls:string[]=[], inputs:string[]=[], systems:string[]=[];
   const provider=createServer(async(req,res)=>{let raw='';for await(const chunk of req)raw+=chunk;const body=JSON.parse(raw);if(body.model==='b')assert(!body.tools?.length);calls.push(body.model);systems.push(String(body.messages[0].content));inputs.push(String(body.messages.at(-1).content));held.set(body.model,res);});
   let app:Awaited<ReturnType<typeof startApp>>|undefined;

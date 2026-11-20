@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { startApp } from './test-bridge.ts';
 
 test('routine flow dispatch joins once, snapshots edits and recovers interrupted steps', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-flow-http-')), calls: { model: string; prompt: string }[] = [];
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-flow-http-')), calls: { model: string; prompt: string }[] = [];
   let hold = false, failC = false, rootMode = 'normal', holdD = false;
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;

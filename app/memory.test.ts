@@ -9,7 +9,7 @@ import { startApp } from './test-bridge.ts';
 import { memoryCommand, memoryDraft } from './src/memory-command.ts';
 
 test('memory CRUD, exact retry, isolated provider search and bounded context survive restart', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-memory-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-memory-'));
   const contexts: string[] = [], results: any[] = [];
   let malformed = false;
   const provider = createServer(async (req, res) => {
@@ -90,7 +90,7 @@ test('memory CRUD, exact retry, isolated provider search and bounded context sur
 });
 
 test('Rust memory permits edits at capacity and rolls back edits over the context budget', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-memory-capacity-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-memory-capacity-'));
   const app = await startApp({ database: join(dir, 'state.sqlite') });
   async function request(path: string, body?: unknown, status = 200) {
     const response = await fetch(app.origin + path, {

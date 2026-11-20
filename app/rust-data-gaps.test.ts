@@ -16,18 +16,18 @@ import { execFileSync } from 'node:child_process';
 import { legacyCheckpointFixture as createWorkspaceGit } from './test-support/node-checkpoint-fixture.ts';
 
 async function fixture() {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-data-gaps-')), database = join(directory, 'db.sqlite');
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-data-gaps-')), database = join(directory, 'db.sqlite');
   const keys = generateKeyPairSync('rsa', { modulusLength: 2048 }), key = randomBytes(32), lookupKey = randomBytes(32), keyId = randomUUID();
   let mailbox = 'member@example.com', locked = false;
   const upstream = createServer((req, res) => { res.setHeader('Content-Type', 'application/json'); res.statusCode = locked ? 503 : 200; res.end(JSON.stringify({ id: 'member', email_addresses: [{ email_address: mailbox, verification: { status: 'verified' } }, { email_address: 'wrong@example.com', verification: { status: 'unverified' } }] })); });
   await new Promise<void>(ready => upstream.listen(0, '127.0.0.1', ready));
   const address = upstream.address(); assert(address && typeof address !== 'string');
-  const auth = { secretKey: 'sk_test_fixture', publishableKey: 'pk_test_fixture', issuer: 'https://fixture.clerk.accounts.dev', origin: 'https://briefsip.example', development: true, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), apiUrl: `http://127.0.0.1:${address.port}` };
+  const auth = { secretKey: 'sk_test_fixture', publishableKey: 'pk_test_fixture', issuer: 'https://fixture.clerk.accounts.dev', origin: 'https://minarbot.example', development: true, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), apiUrl: `http://127.0.0.1:${address.port}` };
   const db = testDatabase(database); installFrozenNodeSchema(db);
   const owner = randomUUID(), member = randomUUID();
   for (const [id, subject] of [[owner, 'owner'], [member, 'member']]) db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES(?,?,?,?)').run(id, auth.issuer, subject, Date.now());
   db.close();
-  const options = { database, auth, testKeyringLocked: false, mailFrom: 'Briefsip <noreply@example.com>', testKeyring: { 'mail-aead/active': keyId, [`mail-aead/${keyId}`]: key.toString('base64url'), 'mail-lookup/v1': lookupKey.toString('base64url'), 'sync-hmac/v1': randomBytes(32).toString('base64url') } };
+  const options = { database, auth, testKeyringLocked: false, mailFrom: 'Minarbot <noreply@example.com>', testKeyring: { 'mail-aead/active': keyId, [`mail-aead/${keyId}`]: key.toString('base64url'), 'mail-lookup/v1': lookupKey.toString('base64url'), 'sync-hmac/v1': randomBytes(32).toString('base64url') } };
   let app = await startApp(options, { directory, servers: [upstream] });
   const token = (sub: string) => { const now = Math.floor(Date.now() / 1000), unsigned = `${Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url')}.${Buffer.from(JSON.stringify({ iss: auth.issuer, sub, sid: `sess_${sub}`, azp: auth.origin, nbf: now - 1, exp: now + 600, iat: now - 1 })).toString('base64url')}`; return `${unsigned}.${sign('RSA-SHA256', Buffer.from(unsigned), keys.privateKey).toString('base64url')}`; };
   async function request(path: string, body?: Record<string, unknown>, status = 200, subject = 'owner', method = 'POST'): Promise<any> {
@@ -92,7 +92,7 @@ test('Rust sync snapshots page, hash and replay; delta cursors survive restart a
 });
 
 test('Rust avatars preserve decoded pixels across resizing, alpha, JPEG, WebP and orientation', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-avatar-parity-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-avatar-parity-'));
   const app = await startRustServer({ database: join(directory, 'db.sqlite') });
   const request = async (path: string, body?: unknown, status = 200) => {
     const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
@@ -128,7 +128,7 @@ test('Rust avatars preserve decoded pixels across resizing, alpha, JPEG, WebP an
 });
 
 test('Rust workspace and sidebar preserve UTF-16 slices; script grants replay and visibility skips are durable', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-wire-parity-')), database = join(directory, 'db.sqlite'), agent = randomUUID();
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-wire-parity-')), database = join(directory, 'db.sqlite'), agent = randomUUID();
   const options = { database, fixedClock: Date.now(), scriptToken: 'fixture-script-token-abcdefghijklmnopqrstuvwxyz', workspaces: [{ agent, directory, write: true }] };
   let app = await startRustServer(options);
   const request = async (path: string, body?: unknown, status = 200) => {
@@ -178,7 +178,7 @@ test('Rust workspace and sidebar preserve UTF-16 slices; script grants replay an
 });
 
 test('Rust checkpoint project bindings use the turn agent grant and preserve panel file access', async () => {
-  const directory = mkdtempSync(join(process.env.HOME!, 'briefsip-project-checkpoint-')), database = join(directory, 'data/db.sqlite'), workspace = join(directory, 'workspace');
+  const directory = mkdtempSync(join(process.env.HOME!, 'minarbot-project-checkpoint-')), database = join(directory, 'data/db.sqlite'), workspace = join(directory, 'workspace');
   mkdirSync(join(directory, 'data')); mkdirSync(workspace); writeFileSync(join(workspace, 'note.txt'), 'Checkpoint');
   execFileSync('git', ['init', '-q', workspace]);
   const app = await startRustServer({ database });

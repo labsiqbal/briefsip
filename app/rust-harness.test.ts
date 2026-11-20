@@ -11,7 +11,7 @@ import { rustBinary } from './rust-binary.ts';
 import { mcpScopes } from './t3/mcp-session-registry.ts';
 
 test('mise shim probes and launches with trusted mise paths and an isolated home', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-mise-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-mise-'));
   const home = join(dir, 'owner'), workspace = join(dir, 'workspace'), agent = randomUUID();
   const config = join(home, '.config/mise'), state = join(home, '.local/state/mise');
   const cache = join(home, '.cache/mise'), data = join(dir, 'xdg-data/mise');
@@ -109,7 +109,7 @@ exit 1
 });
 
 test('Rust ACP and Pi execute fake protocols with model selection and approvals', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-rust-acp-')), executable = join(dir, 'fake-acp');
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-rust-acp-')), executable = join(dir, 'fake-acp');
   writeFileSync(executable, `#!${process.execPath}\n` + readFileSync(new URL('./fixtures/fake-acp.mjs', import.meta.url), 'utf8').split('\n').slice(1).join('\n')); chmodSync(executable, 0o700);
   const agent = randomUUID(), runtimes = ['hermes', 'grok', 'opencode', 'gemini', 'kiro', 'antigravity', 'pi'];
   const app = await startApp({ database: join(dir, 'state.sqlite'), workspaces: [{ agent, directory: dir, write: true }], harness: { executables: Object.fromEntries(runtimes.map(runtime => [runtime, executable])) } });
@@ -139,7 +139,7 @@ test('Rust ACP and Pi execute fake protocols with model selection and approvals'
 });
 
 test('Rust MCP feature receipts, scopes, cursors and stdio forwarding', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-rust-harness-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-rust-harness-'));
   const app = await startApp({ database: join(dir, 'state.sqlite'), baseURL: 'http://127.0.0.1:1/v1', apiKey: 'fixture-key' });
   try {
     const peer = app.mcpServer.createPeerToken({ id: randomUUID(), name: 'Owner', scopes: [...mcpScopes] });
@@ -163,8 +163,8 @@ test('Rust MCP feature receipts, scopes, cursors and stdio forwarding', async ()
     const project = await call('create_project', { requestId: randomUUID(), name: 'Fixture project', members: [{ agent: agent.id, write: false }] });
     assert.equal((await call('read_project', { project: project.id })).members.items[0].agent, agent.id);
     const section = await call('add_project_section', { requestId: randomUUID(), project: project.id, revision: 1, name: 'Research' }); assert.equal(section.sections.length, 2);
-    const binary = resolve(rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY));
-    const child = spawn(binary, ['--mcp-stdio'], { env: { PATH: process.env.PATH, BRIEFSIP_MCP_URL: app.origin + '/mcp', BRIEFSIP_MCP_TOKEN: peer.token }, stdio: ['pipe', 'pipe', 'pipe'] });
+    const binary = resolve(rustBinary('minarbot-server', process.env.MINARBOT_RUST_BINARY));
+    const child = spawn(binary, ['--mcp-stdio'], { env: { PATH: process.env.PATH, MINARBOT_MCP_URL: app.origin + '/mcp', MINARBOT_MCP_TOKEN: peer.token }, stdio: ['pipe', 'pipe', 'pipe'] });
     let output = '', error = ''; child.stdout.setEncoding('utf8').on('data', value => { output += value; }); child.stderr.setEncoding('utf8').on('data', value => { error += value; });
     const closed = once(child, 'close');
     child.stdin.end([JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize' }), JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }), JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' })].join('\n') + '\n');

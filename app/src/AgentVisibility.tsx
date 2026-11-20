@@ -1,11 +1,12 @@
+import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { useEffect, useRef, useState } from 'react';
 import { visibilityCommand } from '../shared/agent-visibility';
 import { Alert, Badge, Button, Card, Row, useConfirm, RecoveryAlert } from './ui/kit';
 
 export function AgentVisibility({ agent, request, onChanged }: { agent: { id: string; name: string; hidden?: boolean; visibility_revision?: number }; request: <T>(path: string, body?: unknown) => Promise<T>; onChanged: () => Promise<void> }) {
-  const key = `briefsip-visibility:${agent.id}`;
+  const key = `minarbot-visibility:${agent.id}`;
   const [recovery, setRecovery] = useState(() => {
-    try { const raw = sessionStorage.getItem(key); return { pending: raw ? visibilityCommand(JSON.parse(raw)) : null, invalid: false }; }
+    try { const raw = readProductStorage(sessionStorage, key); return { pending: raw ? visibilityCommand(JSON.parse(raw)) : null, invalid: false }; }
     catch { return { pending: null, invalid: true }; }
   });
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
@@ -22,14 +23,14 @@ export function AgentVisibility({ agent, request, onChanged }: { agent: { id: st
       if (!mounted.current) return;
       await onChanged();
       if (!mounted.current) return;
-      if (sessionStorage.getItem(key) === JSON.stringify(command)) sessionStorage.removeItem(key); setRecovery({ pending: null, invalid: false });
+      if (readProductStorage(sessionStorage, key) === JSON.stringify(command)) removeProductStorage(sessionStorage, key); setRecovery({ pending: null, invalid: false });
     } catch (error) { if (mounted.current) setError(error instanceof Error ? error.message : 'Changes are not confirmed yet. Try again.'); }
     finally { flight.current = false; if (mounted.current) setBusy(false); }
   }
   async function reload() {
     if (flight.current || !await confirm({ title: 'Discard the saved request and load the latest status?', description: 'Changes already accepted by the server still apply.', confirm: 'Discard and reload', danger: true })) return;
     flight.current = true; setBusy(true);
-    try { const stored = sessionStorage.getItem(key); await onChanged(); if (!mounted.current) return; if (sessionStorage.getItem(key) === stored) sessionStorage.removeItem(key); if (mounted.current) { setRecovery({ pending: null, invalid: false }); setError(''); } }
+    try { const stored = readProductStorage(sessionStorage, key); await onChanged(); if (!mounted.current) return; if (readProductStorage(sessionStorage, key) === stored) removeProductStorage(sessionStorage, key); if (mounted.current) { setRecovery({ pending: null, invalid: false }); setError(''); } }
     catch { if (mounted.current) setError('Latest status has not loaded. Try reloading again.'); }
     finally { flight.current = false; if (mounted.current) setBusy(false); }
   }

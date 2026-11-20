@@ -10,12 +10,12 @@ import { startApp } from './test-bridge.ts';
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const source = readFileSync(new URL('./fixtures/fake-acp.mjs', import.meta.url), 'utf8');
 function executableFixture(room = false) {
-  const workspace = mkdtempSync(join(room ? join(import.meta.dirname, 'node_modules') : tmpdir(), 'briefsip-acp-')), executable = join(workspace, 'fake-acp');
+  const workspace = mkdtempSync(join(room ? join(import.meta.dirname, 'node_modules') : tmpdir(), 'minarbot-acp-')), executable = join(workspace, 'fake-acp');
   writeFileSync(executable, `#!${process.execPath}\n` + source.split('\n').slice(1).join('\n')); chmodSync(executable, 0o700);
   return { workspace, executable, close() { rmSync(workspace, { recursive: true, force: true }); } };
 }
 async function rustFixture(runtime: HarnessRuntime, { write = true, timeout = 15_000, model = 'fixture-model' } = {}) {
-  const f = executableFixture(), directory = mkdtempSync(join(tmpdir(), 'briefsip-acp-state-')), agent = randomUUID();
+  const f = executableFixture(), directory = mkdtempSync(join(tmpdir(), 'minarbot-acp-state-')), agent = randomUUID();
   const database = join(directory, 'db.sqlite');
   const app = await startApp({
     database, timeout, workspaces: [{ agent, directory: f.workspace, write }],
@@ -31,7 +31,7 @@ async function rustFixture(runtime: HarnessRuntime, { write = true, timeout = 15
   };
   const close = async () => { try { await app.close(); } finally { f.close(); rmSync(directory, { recursive: true, force: true }); } };
   try {
-    const profile = { name: 'ACP fixture', model: 'saved-api-model', instructions: 'Briefsip native context.' };
+    const profile = { name: 'ACP fixture', model: 'saved-api-model', instructions: 'Minarbot native context.' };
     await request('/api/agents', { id: agent, ...profile, runtime: 'api' });
     await request(agentPath + '/edit', { id: randomUUID(), revision: 1, ...profile, runtime, harnessModel: model, confirmRuntime: true });
   } catch (error) { await close(); throw error; }
@@ -79,15 +79,15 @@ for (const runtime of ['hermes', 'antigravity', 'grok', 'opencode', 'gemini', 'k
       assert.equal(init.params.clientCapabilities.terminal, false);
       assert.equal(session.params.cwd, f.workspace);
       assert(JSON.stringify(session).includes('test-session-secret'));
-      assert(!JSON.stringify(log).includes('BRIEFSIP_HARNESS_CANARY'));
+      assert(!JSON.stringify(log).includes('MINARBOT_HARNESS_CANARY'));
       assert(log.some(row => row.method === 'session/set_mode' && row.params.modeId === 'default'));
       assert(log.some(row => row.method === 'session/set_model' && row.params.modelId === 'fixture-model'));
       const decisions = log.flatMap(row => row.result?.outcome?.optionId ?? []);
       assert.deepEqual(decisions, ['once']);
       const prompt = log.find(row => row.method === 'session/prompt');
-      assert.match(prompt.params.prompt[0].text, /^<briefsip_context>\n<runtime_info>/);
-      assert.match(prompt.params.prompt[0].text, /<\/briefsip_context>$/);
-      assert.match(prompt.params.prompt[1].text, /Briefsip native context\./);
+      assert.match(prompt.params.prompt[0].text, /^<minarbot_context>\n<runtime_info>/);
+      assert.match(prompt.params.prompt[0].text, /<\/minarbot_context>$/);
+      assert.match(prompt.params.prompt[1].text, /Minarbot native context\./);
       assert.match(prompt.params.prompt[1].text, /(?:^|\n)user: hello$/);
       assert.equal(prompt.params.sessionId, 'fixture-session');
     } finally { await f.close(); }
@@ -209,7 +209,7 @@ test('ACP cancel reaches child, kills detached tool process and preserves inspec
   } finally { await f.close(); }
 });
 test('ACP runtimes work through server: approvals, segments and runtime picker', async () => {
-  const f = executableFixture(), directory = mkdtempSync(join(tmpdir(), 'briefsip-acp-server-')), agent = randomUUID();
+  const f = executableFixture(), directory = mkdtempSync(join(tmpdir(), 'minarbot-acp-server-')), agent = randomUUID();
   const app = await startApp({ database: join(directory, 'db.sqlite'), port: 0, timeout: 15_000, workspaces: [{ agent, directory: f.workspace, write: true }], harness: { executables: Object.fromEntries(harnessRuntimes.map(runtime => [runtime, f.executable])), issuer: { mintAgentSession: () => ({ id: randomUUID(), token: 'test-session-secret' }), revokeAgentSession() {} } } });
   const request = async (path: string, body?: unknown) => { const res = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); const data = await res.json(); assert(res.ok, JSON.stringify(data)); return data; };
   try {
@@ -233,7 +233,7 @@ test('ACP runtimes work through server: approvals, segments and runtime picker',
 });
 
 test('ACP room queue, checkpoints and stop preserve peer approvals', async () => {
-  const f = executableFixture(true), directory = mkdtempSync(join(tmpdir(), 'briefsip-acp-room-'));
+  const f = executableFixture(true), directory = mkdtempSync(join(tmpdir(), 'minarbot-acp-room-'));
   const git = (...args: string[]) => execFileSync('git', ['-c', 'core.hooksPath=/dev/null', ...args], {
     cwd: f.workspace, env: { PATH: process.env.PATH, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
   });

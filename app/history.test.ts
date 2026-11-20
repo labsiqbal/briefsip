@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 
 test('history pages preserve order and conversation boundaries across restart', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-history-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-history-'));
   const provider = createServer(async (req, res) => {
     for await (const chunk of req) { void chunk; }
     res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'Done.' } }] }));

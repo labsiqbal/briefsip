@@ -10,7 +10,7 @@ import { startApp } from './test-bridge.ts';
 import { restoreSkillCommand } from './shared/skill-command.ts';
 
 test('skill revisions stay pinned, disable isolates agent context and receipts survive restart', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-skills-')), contexts: string[] = [];
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-skills-')), contexts: string[] = [];
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     contexts.push(JSON.parse(raw).messages[0].content);

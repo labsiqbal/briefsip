@@ -9,7 +9,7 @@ import { startApp } from './test-bridge.ts';
 import { restoreWorkspace } from './test-support/backup.ts';
 
 test('avatar HTTP validates images, isolates agents, preserves receipts and survives restart', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-avatar-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-avatar-'));
   const options = { database: join(dir, 'state.sqlite') };
   let app = await startApp(options);
   async function request(path: string, body?: unknown, status = 200) {

@@ -20,12 +20,12 @@ const blockStop = { type: 'content_block_stop', index: 0 };
 const messageDelta = (stop_reason = 'end_turn') => ({ type: 'message_delta', delta: { stop_reason }, usage: { output_tokens: 4 } });
 const messageStop = { type: 'message_stop' };
 test('Rust rejects invalid provider stream termination settings', async () => {
-  await assert.rejects(startApp({ database: ':memory:', streamTermination: 'unknown' }), /stream termination|BRIEFSIP_STREAM_TERMINATION/i);
+  await assert.rejects(startApp({ database: ':memory:', streamTermination: 'unknown' }), /stream termination|MINARBOT_STREAM_TERMINATION/i);
   await assert.rejects(startApp({ database: ':memory:', provider: 'anthropic', streamTermination: 'finish-reason' }), /only supported/);
 });
 
 for (const family of ['openai-compatible', 'anthropic'] as ProviderFamily[]) test(`${family} streaming persists partial text, gates tools, cancels and resumes without replay`, async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-stream-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-stream-'));
   let mode = 'text', calls = 0, wrongTypeClosed = false, release: (() => void) | undefined;
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const part of req) raw += part;
@@ -116,7 +116,7 @@ for (const family of ['openai-compatible', 'anthropic'] as ProviderFamily[]) tes
 });
 
 test('SIGKILL preserves committed stream text without automatic provider replay', { timeout: 15000 }, async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-stream-crash-')); let calls = 0;
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-stream-crash-')); let calls = 0;
   const provider = createServer(async (req, res) => {
     for await (const _part of req) { /* Wait for complete request. */ }
     calls++; res.setHeader('Content-Type', 'text/event-stream'); res.write(sse(chunk({ content: 'Survives crash' })));
@@ -124,7 +124,7 @@ test('SIGKILL preserves committed stream text without automatic provider replay'
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(directory, 'db.sqlite'), stream: true, baseURL: `http://127.0.0.1:${address.port}/v1` };
-  const child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', `import {startApp} from ${JSON.stringify(new URL('./test-bridge.ts', import.meta.url).href)};const app=await startApp(JSON.parse(process.env.BRIEFSIP_TEST_OPTIONS));console.log(app.origin);`], { env: { ...process.env, BRIEFSIP_TEST_OPTIONS: JSON.stringify(options) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', `import {startApp} from ${JSON.stringify(new URL('./test-bridge.ts', import.meta.url).href)};const app=await startApp(JSON.parse(process.env.MINARBOT_TEST_OPTIONS));console.log(app.origin);`], { env: { ...process.env, MINARBOT_TEST_OPTIONS: JSON.stringify(options) }, stdio: ['ignore', 'pipe', 'pipe'] });
   const exited = once(child, 'exit'), output = createInterface({ input: child.stdout }); child.stderr.resume();
   let app: Awaited<ReturnType<typeof startApp>> | undefined;
   try {

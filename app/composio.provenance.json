@@ -4,10 +4,10 @@
   "license": "MIT",
   "notice": "app/src/ui/NOTICE",
   "entries": [
-    { "sourcePath": "server/src/composio.ts", "localPath": "app/composio.ts", "adaptation": "Catalog normalization, managed connect links, connection overlay and server execution adapted to bounded native fetch. Installation identity, per-agent grants, metadata-based approval, version/account binding and durable effect journal are Briefsip-owned." },
+    { "sourcePath": "server/src/composio.ts", "localPath": "app/composio.ts", "adaptation": "Catalog normalization, managed connect links, connection overlay and server execution adapted to bounded native fetch. Installation identity, per-agent grants, metadata-based approval, version/account binding and durable effect journal are Minarbot-owned." },
     { "sourcePath": "server/src/agent/tools.ts", "localPath": "app/composio.ts", "adaptation": "Allow once/always/deny semantics adapted to per-agent, account and metadata-bound policy. Slug-based read guessing deliberately replaced with Composio hints." },
-    { "sourcePath": "server/src/mcp.ts", "localPath": "app/server.ts", "adaptation": "Approval before app dispatch and denied-action tool result adapted to Briefsip's persistent local turn loop." },
-    { "sourcePath": "web/src/components/modals/ConnectAppsModal.tsx", "localPath": "app/src/ConnectedAppsPanel.tsx", "adaptation": "Search, category pills, connection rows and popup flow rebuilt with existing Briefsip kit. Added per-agent grant selector and policy revocation." },
+    { "sourcePath": "server/src/mcp.ts", "localPath": "app/server.ts", "adaptation": "Approval before app dispatch and denied-action tool result adapted to Minarbot's persistent local turn loop." },
+    { "sourcePath": "web/src/components/modals/ConnectAppsModal.tsx", "localPath": "app/src/ConnectedAppsPanel.tsx", "adaptation": "Search, category pills, connection rows and popup flow rebuilt with existing Minarbot kit. Added per-agent grant selector and policy revocation." },
     { "sourcePath": "web/src/components/cards/Cards.tsx", "localPath": "app/src/ApprovalCard.tsx", "adaptation": "Three approval decisions and outcome display rebuilt with kit Card, full arguments disclosure and exact retry recovery." }
   ],
   "api": {

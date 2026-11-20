@@ -1,3 +1,4 @@
+import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { useVisiblePolling } from './hooks/useVisiblePolling';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { siteCommand } from './site-command';
@@ -8,7 +9,7 @@ type Site = { id: string; name: string; source: string; revision: number; delete
 type Page = { sites: Site[]; next_after: string | null };
 type Command = ReturnType<typeof siteCommand>;
 export function SitesPanel({ agent, request }: { agent: string; request: <T>(path: string, data?: unknown) => Promise<T> }) {
-  const path = `/api/agents/${agent}/sites`, key = `briefsip-sites:${agent}`;
+  const path = `/api/agents/${agent}/sites`, key = `minarbot-sites:${agent}`;
   const [open, setOpen] = useState(true), [editorOpen, setEditorOpen] = useState(false), [page, setPage] = useState<Page | null>(null), [cursors, setCursors] = useState(['']);
   const [editing, setEditing] = useState<Site | null>(null), [name, setName] = useState(''), [source, setSource] = useState('');
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [pending, setPending] = useState<Command | null>(null), [invalid, setInvalid] = useState(false);
@@ -22,7 +23,7 @@ export function SitesPanel({ agent, request }: { agent: string; request: <T>(pat
   const after = cursors.at(-1)!;
   const failure = (reason: unknown) => reason instanceof TypeError ? 'Connection lost. Retry with the same request.' : reason instanceof Error ? reason.message : 'Site could not load. Try again.';
   useEffect(() => {
-    try { const stored = sessionStorage.getItem(key); if (stored) { setPending(siteCommand(JSON.parse(stored))); setOpen(true); setEditorOpen(true); } }
+    try { const stored = readProductStorage(sessionStorage, key); if (stored) { setPending(siteCommand(JSON.parse(stored))); setOpen(true); setEditorOpen(true); } }
     catch { setInvalid(true); setOpen(true); setEditorOpen(true); }
     return () => { generation.current++; };
   }, [key]);
@@ -50,7 +51,7 @@ export function SitesPanel({ agent, request }: { agent: string; request: <T>(pat
       const command = pending ?? siteCommand({ id: crypto.randomUUID(), ...(editing ? { site: editing.id, revision: editing.revision } : {}), ...(deleting ? { delete: true } : { name, source }) });
       sessionStorage.setItem(key, JSON.stringify(command)); setPending(command);
       const result = await request<Site>(path, command);
-      if (sessionStorage.getItem(key) === JSON.stringify(command)) sessionStorage.removeItem(key);
+      if (readProductStorage(sessionStorage, key) === JSON.stringify(command)) removeProductStorage(sessionStorage, key);
       if (version !== generation.current) return;
       setPending(null); reset(); setNotice(result.deleted ? 'Site deleted.' : 'Site saved.'); setReload(value => value + 1);
     } catch (reason) { if (version === generation.current) setError(failure(reason)); }
@@ -58,7 +59,7 @@ export function SitesPanel({ agent, request }: { agent: string; request: <T>(pat
   }
   async function discard() {
     if (!await confirm({ title: 'Discard site recovery?', description: 'Changes may already be saved. Check the site list before making new changes.', confirm: 'Discard recovery', danger: true })) return;
-    try { sessionStorage.removeItem(key); setPending(null); setInvalid(false); reset(); setReload(value => value + 1); }
+    try { removeProductStorage(sessionStorage, key); setPending(null); setInvalid(false); reset(); setReload(value => value + 1); }
     catch { setError('Recovery could not be cleared. Check browser storage.'); }
   }
   const locked = busy || !!pending || invalid;

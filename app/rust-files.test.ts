@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs';
 import { legacyCheckpointFixture } from './test-support/node-checkpoint-fixture.ts';
 
 async function fixture() {
-  const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-files-')), database = join(root, 'app.sqlite'), workspace = join(root, 'workspace');
+  const root = mkdtempSync(join(tmpdir(), 'minarbot-rust-files-')), database = join(root, 'app.sqlite'), workspace = join(root, 'workspace');
   mkdirSync(workspace);
   let app = await startRustServer({ database }); await app.close();
   const db = testDatabase(database), agent = randomUUID(), other = randomUUID(), thread = randomUUID(), channel = randomUUID();
@@ -163,17 +163,17 @@ test('Rust shared data reads stay isolated and backup preserves embedded data an
   const f = await fixture();
   try {
     const dataPath = join(f.root, 'data.sqlite'), data = testDatabase(dataPath);
-    data.exec("CREATE TABLE briefsip_owners(name TEXT PRIMARY KEY COLLATE NOCASE,owner TEXT NOT NULL); CREATE TABLE things(id INTEGER PRIMARY KEY,text TEXT); INSERT INTO things VALUES(1,'saved once');");
-    data.prepare('INSERT INTO briefsip_owners VALUES(?,?)').run('things', f.agent); data.close();
+    data.exec("CREATE TABLE minarbot_owners(name TEXT PRIMARY KEY COLLATE NOCASE,owner TEXT NOT NULL); CREATE TABLE things(id INTEGER PRIMARY KEY,text TEXT); INSERT INTO things VALUES(1,'saved once');");
+    data.prepare('INSERT INTO minarbot_owners VALUES(?,?)').run('things', f.agent); data.close();
     const db = testDatabase(f.database); db.prepare('UPDATE shared_data SET image=?,revision=2 WHERE id=1').run(readFileSync(dataPath)); db.close();
     const listing = await f.request('/api/data'); assert.equal(listing.tables[0].name, 'things'); assert.equal(listing.tables[0].owner, f.agent); assert.equal(listing.revision, 2);
     const command = { id: randomUUID(), revision: 2, sql: 'SELECT * FROM things' }, result = await f.request('/api/data/query', command); assert.deepEqual(result.rows, [[1, 'saved once']]); assert.deepEqual(await f.request('/api/data/query', command), result);
-    for (const sql of ['DELETE FROM things', 'SELECT * FROM agents', "ATTACH '/tmp/forbidden' AS other", 'PRAGMA database_list', 'SELECT * FROM briefsip_owners']) await f.request('/api/data/query', { ...command, id: randomUUID(), sql }, 400);
+    for (const sql of ['DELETE FROM things', 'SELECT * FROM agents', "ATTACH '/tmp/forbidden' AS other", 'PRAGMA database_list', 'SELECT * FROM minarbot_owners']) await f.request('/api/data/query', { ...command, id: randomUUID(), sql }, 400);
     const file = randomUUID(); await f.upload(`/api/agents/${f.agent}/files/${file}`, Buffer.from('backup bytes'), 'note.txt');
     const response = await fetch(f.app.origin + '/api/backup', { method: 'POST', headers: { Origin: f.app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ id: randomUUID(), confirmed: true }) });
-    assert.equal(response.status, 200); assert.equal(response.headers.get('content-type'), 'application/vnd.sqlite3'); assert.equal(response.headers.get('content-disposition'), 'attachment; filename="briefsip-workspace.sqlite"');
+    assert.equal(response.status, 200); assert.equal(response.headers.get('content-type'), 'application/vnd.sqlite3'); assert.equal(response.headers.get('content-disposition'), 'attachment; filename="minarbot-workspace.sqlite"');
     const snapshotPath = join(f.root, 'snapshot.sqlite'); writeFileSync(snapshotPath, Buffer.from(await response.arrayBuffer())); const snapshot = testDatabase(snapshotPath);
-    assert.deepEqual({ ...snapshot.prepare('SELECT format,version FROM briefsip_backup').get() }, { format: 'briefsip-workspace', version: 1 });
+    assert.deepEqual({ ...snapshot.prepare('SELECT format,version FROM minarbot_backup').get() }, { format: 'minarbot-workspace', version: 1 });
     assert.equal(Buffer.from(snapshot.prepare('SELECT bytes FROM files WHERE id=?').get(file)!.bytes as Uint8Array).toString(), 'backup bytes'); snapshot.close();
     const drop = { id: randomUUID(), revision: 2, table: 'things' }; const deleted = await f.request('/api/data/drop', drop); assert.equal(deleted.revision, 3); assert.deepEqual(await f.request('/api/data/drop', drop), deleted);
     assert.deepEqual((await f.request('/api/data')).tables, []); await f.request('/api/data/query', { ...command, id: randomUUID() }, 409);

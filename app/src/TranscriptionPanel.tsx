@@ -52,7 +52,7 @@ function TranscriptionControls({ path, request }: { path: string; request: <T>(p
     {(info?.format === 'mp4' || info?.format === 'webm') && <Alert tone="warn">Whole file is sent, including any video. Provider must support its format and codec.</Alert>}
     {operation?.status === 'pending' && <p role="status">Processing. Closing keeps transcription running.</p>}
     {operation?.status === 'pending' && <Button size="sm" disabled={cancelling} onClick={() => void cancel()}>Cancel transcription</Button>}
-    {operation?.status === 'cancelled' && <p role="status">Cancelled in Briefsip. Provider may still process or bill this request. New attempts may incur another charge.</p>}
+    {operation?.status === 'cancelled' && <p role="status">Cancelled in Minarbot. Provider may still process or bill this request. New attempts may incur another charge.</p>}
     {operation?.status === 'uncertain' && <Alert tone="warn">The previous result is uncertain. Check the provider before retrying. A new request may incur another charge.</Alert>}
     {operation && <p className="k-field__hint">{operation.usage?.type === 'duration' ? `Duration: ${operation.usage.seconds} seconds.` : operation.usage?.type === 'tokens' ? `Tokens: input ${operation.usage.input_tokens ?? 'unknown'}, output ${operation.usage.output_tokens ?? 'unknown'}, total ${operation.usage.total_tokens ?? 'unknown'}.` : 'Usage unknown ·'} Cost unknown.</p>}
     {operation?.result && <a className="k-link" href={`${path.slice(0, path.lastIndexOf('/'))}/${operation.result.id}`} download={operation.result.name}>Download transcript ({attachmentSize(operation.result.size)})</a>}

@@ -2,11 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
+import { githubRepository } from '../../scripts/rename-compat.mjs';
 import { configureUpdates, UPDATE_INTERVAL_MS } from './updates.mjs';
 
 test('AppImage updater uses electron-builder configuration for the public release feed', () => {
   const { build } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
-  assert.deepEqual(build.publish, [{ provider: 'generic', url: 'https://github.com/labsiqbal/briefsip/releases/latest/download/' }]);
+  assert.deepEqual(build.publish, [{ provider: 'generic', url: `https://github.com/${githubRepository}/releases/latest/download/` }]);
 });
 test('updates check on launch and each six hours; download in background, restart only on consent', async () => {
   const updater = new EventEmitter(); let checks = 0; let installs = 0; let tick; let cleared = false; let answer = 1;

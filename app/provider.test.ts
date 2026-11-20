@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 
 test('native Anthropic messages, catalog, tools, resume, cancellation and fallback use one explicit provider', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-anthropic-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-anthropic-'));
   const payloads: any[] = []; let mode = 'text', catalogMode = 'ok', catalogCalls = 0;
   const provider = createServer(async (req, res) => {
     assert.equal(req.headers['x-api-key'], 'fixture-anthropic'); assert.equal(req.headers['anthropic-version'], '2023-06-01'); assert.equal(req.headers.authorization, undefined);

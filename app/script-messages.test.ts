@@ -10,7 +10,7 @@ import { startApp } from './test-bridge.ts';
 test('script messages and answers share grants, scope, receipts, redaction and rate admission', async t => {
   // Keep admission checks within one rate window even on a busy host.
   t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-script-messages-')), token = randomBytes(32).toString('base64url'); let calls = 0;
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-script-messages-')), token = randomBytes(32).toString('base64url'); let calls = 0;
   const provider = createServer(async (req,res) => {
     let raw=''; for await (const chunk of req) raw+=chunk; calls++;
     const messages=JSON.parse(raw).messages;

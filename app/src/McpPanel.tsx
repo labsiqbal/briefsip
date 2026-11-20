@@ -1,3 +1,4 @@
+import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { usePolling } from './hooks/usePolling';
 import { getNonce } from 'get-nonce';
 import { useEffect, useRef, useState } from 'react';
@@ -5,7 +6,7 @@ import { ArrowLeft, ChevronLeft, ChevronRight, Info, Ellipsis, Plug, Plus } from
 import { ActionMenu, Alert, Badge, Button, Card, Checkbox, CodeBlock, Collapsible, Dialog, EmptyState, Field, IconButton, Input, PageHeader, Row, Section, Select, SkeletonRows, Tooltip, useConfirm, RecoveryAlert } from './ui/kit';
 type Connection = { id: string; name: string; url: string; hasToken: boolean; enabled: number; revision: number };
 type Tool = { name: string; title?: string; description?: string; inputSchema: unknown; _meta?: Record<string, unknown> };
-const label = (tool: Tool) => `${tool._meta?.['briefsip.kind'] === 'resource-template' ? 'Resource template: ' : tool._meta?.['briefsip.kind'] === 'resource' ? 'Resource: ' : tool._meta?.['briefsip.kind'] === 'prompt' ? 'Prompt: ' : 'Tool: '}${tool.title && tool.title !== tool.name && !tool._meta?.['briefsip.kind'] ? `${tool.title} (${tool.name})` : tool.title ?? tool.name}`;
+const label = (tool: Tool) => `${tool._meta?.['minarbot.kind'] === 'resource-template' ? 'Resource template: ' : tool._meta?.['minarbot.kind'] === 'resource' ? 'Resource: ' : tool._meta?.['minarbot.kind'] === 'prompt' ? 'Prompt: ' : 'Tool: '}${tool.title && tool.title !== tool.name && !tool._meta?.['minarbot.kind'] ? `${tool.title} (${tool.name})` : tool.title ?? tool.name}`;
 type Detail = Connection & { tools: Tool[]; grant: { revision: number; tools: string[] } };
 type Command = { path: string; body: Record<string, unknown> & { id: string } };
 function restore(raw: string | null): Command | null {
@@ -16,8 +17,8 @@ function restore(raw: string | null): Command | null {
   return value;
 }
 export function McpPanel({ agents, request, project }: { project?: string; agents: { id: string; name: string }[]; request: <T>(path: string, body?: unknown) => Promise<T>; onClose: () => void }) {
-  const storage = 'briefsip:mcp-command'+(project?`:${project}`:'');
-  const [recovery] = useState(() => { try { return { command: restore(sessionStorage.getItem(storage)), invalid: false }; } catch { return { command: null, invalid: true }; } });
+  const storage = 'minarbot:mcp-command'+(project?`:${project}`:'');
+  const [recovery] = useState(() => { try { return { command: restore(readProductStorage(sessionStorage, storage)), invalid: false }; } catch { return { command: null, invalid: true }; } });
   const [pending, setPending] = useState(recovery.command), [invalid, setInvalid] = useState(recovery.invalid);
   const [page, setPage] = useState<{ items: Connection[]; next_after: string | null } | null>(null), [cursors, setCursors] = useState(['']);
   const [agent, setAgent] = useState(agents[0]?.id ?? ''), [selected, setSelected] = useState(''), [detail, setDetail] = useState<Detail | null>(null), [tools, setTools] = useState<string[]>([]);
@@ -69,7 +70,7 @@ export function McpPanel({ agents, request, project }: { project?: string; agent
       restore(JSON.stringify(command)); sessionStorage.setItem(storage, JSON.stringify(command)); setPending(command); setBusy(true); flight.current = true; reads.current++; setError('');
       await request(command.path, command.body);
       if (current !== generation.current) return;
-      if (sessionStorage.getItem(storage) === JSON.stringify(command)) sessionStorage.removeItem(storage);
+      if (readProductStorage(sessionStorage, storage) === JSON.stringify(command)) removeProductStorage(sessionStorage, storage);
       setPending(null); setDetail(null);
       if (command.body.test && (editing ? command.path === `/api/mcp/${editing.id}` : command.path === '/api/mcp')) { setTested(null); setEditing(null); setRotate(false); setToken(''); setName(''); setUrl(''); setShowForm(false); }
       else if (editing && command.path === `/api/mcp/${editing.id}`) setTested(null);
@@ -78,7 +79,7 @@ export function McpPanel({ agents, request, project }: { project?: string; agent
     } catch (error) { if (current === generation.current) setError(error instanceof Error ? error.message : 'Changes are not confirmed yet. Try again.'); }
     finally { flight.current = false; if (current === generation.current) setBusy(false); }
   }
-  const ignoreRecovery = <Button size="sm" disabled={busy} onClick={async () => { if (!await confirm({ title: 'Discard saved request?', description: 'Changes may already have succeeded. Check the list after it reloads.', confirm: 'Discard request' })) return; try { sessionStorage.removeItem(storage); setPending(null); setInvalid(false); setRefresh(value => value + 1); } catch { setError('Browser storage could not be updated.'); } }}>Discard request</Button>;
+  const ignoreRecovery = <Button size="sm" disabled={busy} onClick={async () => { if (!await confirm({ title: 'Discard saved request?', description: 'Changes may already have succeeded. Check the list after it reloads.', confirm: 'Discard request' })) return; try { removeProductStorage(sessionStorage, storage); setPending(null); setInvalid(false); setRefresh(value => value + 1); } catch { setError('Browser storage could not be updated.'); } }}>Discard request</Button>;
   const recoveryNotice = <>
     {invalid && <Alert tone="error" title="Recovery unavailable" actions={!pending && ignoreRecovery} />}
     {pending && <RecoveryAlert inFlight={busy} tone="warn" title="Not confirmed" actions={<><Button size="sm" variant="primary" disabled={busy} onClick={() => void execute(pending)}>Try again</Button>{ignoreRecovery}</>} />}
@@ -119,8 +120,8 @@ export function McpPanel({ agents, request, project }: { project?: string; agent
               <Row title={<Checkbox label={label(tool)} checked={tools.includes(tool.name)} disabled={locked} onChange={checked => setTools(value => checked ? [...value, tool.name] : value.filter(name => name !== tool.name))} />} />
               <div style={{ padding: '0 16px 12px' }}><Collapsible title={`Details: ${tool.title ?? tool.name}`}>
                 {tool.description && <p className="k-field__hint">{tool.description}</p>}
-                {tool._meta?.['briefsip.kind'] === 'resource-template' && <Alert tone="warn">Permissions cover all URIs this template can form, including parameter values chosen by the agent. The target server still controls access to its data.</Alert>}
-                {typeof tool._meta?.['briefsip.target'] === 'string' && <span className="k-field__hint" style={{ overflowWrap: 'anywhere' }}>{tool._meta['briefsip.target']}</span>}
+                {tool._meta?.['minarbot.kind'] === 'resource-template' && <Alert tone="warn">Permissions cover all URIs this template can form, including parameter values chosen by the agent. The target server still controls access to its data.</Alert>}
+                {typeof tool._meta?.['minarbot.target'] === 'string' && <span className="k-field__hint" style={{ overflowWrap: 'anywhere' }}>{tool._meta['minarbot.target']}</span>}
                 <CodeBlock label={`Parameters for ${label(tool)}`}>{JSON.stringify(tool.inputSchema, null, 2)}</CodeBlock>
               </Collapsible></div>
             </div>)}</Card> : <EmptyState title="No tools, resources or prompts" />}

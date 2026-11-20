@@ -6,7 +6,7 @@ test('empty proxy responses indicate a restart', async () => {
   for (const status of [502, 503, 504]) {
     await assert.rejects(readJson(new Response(null, { status })), error =>
       error instanceof HttpError && error.status === status && isReconnecting(error)
-      && error.message === 'Briefsip is restarting. Try again in a moment.');
+      && error.message === 'Minarbot is restarting. Try again in a moment.');
   }
 });
 
@@ -25,5 +25,5 @@ test('JSON errors preserve status, message and code', async () => {
 
 test('valid success returns JSON and empty success reports invalid response', async () => {
   assert.deepEqual(await readJson(Response.json({ ok: true })), { ok: true });
-  await assert.rejects(readJson(new Response('')), { message: 'Briefsip returned an invalid response. Try again.' });
+  await assert.rejects(readJson(new Response('')), { message: 'Minarbot returned an invalid response. Try again.' });
 });

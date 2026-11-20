@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { startApp } from './test-bridge.ts';
 
 test('synthetic scenarios record panel without duplicate writes, inline links, workspace context and approved shell', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-base-eval-')), agent = randomUUID();
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-base-eval-')), agent = randomUUID();
   const workspace = join(directory, 'workspace'); mkdirSync(workspace);
   writeFileSync(join(workspace, 'AGENTS.md'), 'Project convention: check native tests.');
   const calls: string[] = [], prompts: string[] = [], failures: unknown[] = [];

@@ -33,10 +33,10 @@ function holdRestoreGuard(database: string) {
 }
 
 async function fixture(version: 1 | 2 | 3 = 3, seed?: (db: DatabaseSync, owner: HumanActor, project: string) => void) {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-fence-')), database = join(dir, 'restored.sqlite');
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-fence-')), database = join(dir, 'restored.sqlite');
   let db = testDatabase(join(dir, 'source.sqlite')); initializeCanonicalSchema(db, Date.now(), version);
   const owner: HumanActor = { accountId: '11111111-1111-4111-8111-111111111111', issuer: 'https://fixture.clerk.accounts.dev', subject: 'user_owner', sessionId: 'sess_owner', expiresAt: Date.now() + 300000 };
-  const config = { origin: 'https://briefsip.example', issuer: owner.issuer, secretKey: 'sk_test_fixture', publishableKey: `pk_test_${Buffer.from('fixture.clerk.accounts.dev$').toString('base64')}` };
+  const config = { origin: 'https://minarbot.example', issuer: owner.issuer, secretKey: 'sk_test_fixture', publishableKey: `pk_test_${Buffer.from('fixture.clerk.accounts.dev$').toString('base64')}` };
   const project = '22222222-2222-4222-8222-222222222222';
   db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES (?,?,?,?)').run(owner.accountId, owner.issuer, owner.subject, Date.now());
   db.prepare('INSERT INTO projects(id,account,name,private,deleted,revision) VALUES (?,?,?,1,0,1)').run(project, owner.accountId, 'Restore');
@@ -60,7 +60,7 @@ async function fixture(version: 1 | 2 | 3 = 3, seed?: (db: DatabaseSync, owner: 
   const write = (path: string, value: unknown) => writeFileSync(path, JSON.stringify(value ?? null), { mode: 0o600 });
   const options = (actor: HumanActor = owner) => {
     const credentials = identity(actor);
-    return { ...credentials, env: { ...credentials.env, BRIEFSIP_RESTORE_TRUST: trustFile } };
+    return { ...credentials, env: { ...credentials.env, MINARBOT_RESTORE_TRUST: trustFile } };
   };
   const run = (args: string[], actor: HumanActor = owner) => restoreCommand(args, options(actor));
   const command = (name: string, pin: unknown, actor = owner, gate = sessionFile, paths: string[] = []) => {

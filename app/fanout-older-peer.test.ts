@@ -18,12 +18,12 @@ async function api(origin: string, path: string, body?: unknown) {
 test('fan-out serves one verified executable archive to a peer without apply polling and waits beyond its former apply deadline', { timeout: 170000 }, async t => {
   const cleanup: Array<() => unknown> = [];
   t.after(async () => { for (const close of cleanup.reverse()) await close(); });
-  const dir = mkdtempSync('/dev/shm/briefsip-fanout-103-');
+  const dir = mkdtempSync('/dev/shm/minarbot-fanout-103-');
   cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
   const releases = join(dir, 'releases'), id = '0.11.0-7d5216a6', release = join(releases, id);
   mkdirSync(join(release, 'bin'), { recursive: true }); mkdirSync(join(releases, 'feed'));
   writeFileSync(join(release, 'package.json'), '{"version":"0.11.0"}');
-  for (const name of ['briefsip-server', 'briefsip-launcher']) writeFileSync(join(release, 'bin', name), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  for (const name of ['minarbot-server', 'minarbot-launcher']) writeFileSync(join(release, 'bin', name), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   const info = { id, version: '0.11.0', commit: '7d5216a6' + '0'.repeat(32), created: '2026-11-18T00:00:00Z', node: process.versions.node, notes: 'Fixture', files: fileManifest(release) };
   for (const path of [join(release, 'release.json'), join(releases, 'feed/latest.json')]) writeFileSync(path, JSON.stringify(info));
   let busy = false, applied = 0;
@@ -55,7 +55,7 @@ test('fan-out serves one verified executable archive to a peer without apply pol
   const responses: { status: number; body: string }[] = [], timers = new Set<ReturnType<typeof setTimeout>>();
   const proxy = createServer((req, res) => {
     const apply = req.url === '/api/peer/updates/apply';
-    if (apply && mutate) { mutate = false; utimesSync(join(release, 'bin/briefsip-server'), 1, 1); }
+    if (apply && mutate) { mutate = false; utimesSync(join(release, 'bin/minarbot-server'), 1, 1); }
     const upstream = request(peerOrigin + req.url, { method: req.method, headers: { ...req.headers, host: new URL(peerOrigin).host } }, reply => {
       if (req.url === '/api/environment' || req.url === '/api/peer/updates') {
         const chunks: Buffer[] = []; reply.on('data', bytes => chunks.push(bytes)); reply.on('end', () => {
@@ -81,8 +81,8 @@ test('fan-out serves one verified executable archive to a peer without apply pol
   const first = command(), result = await api(sender.origin, '/api/updates/fan-out', first);
   assert.equal(result.machines[0].status, 'accepted', JSON.stringify({ result, responses }));
   assert.equal(responses[0].status, 202); assert.equal(verifyRelease(join(dir, 'received'), id).version, '0.11.0');
-  assert(statSync(join(dir, 'received', id, 'bin/briefsip-server')).mode & 0o111);
-  assert.deepEqual(readFileSync(join(dir, 'received', id, 'bin/briefsip-server')), readFileSync(join(release, 'bin/briefsip-server')));
+  assert(statSync(join(dir, 'received', id, 'bin/minarbot-server')).mode & 0o111);
+  assert.deepEqual(readFileSync(join(dir, 'received', id, 'bin/minarbot-server')), readFileSync(join(release, 'bin/minarbot-server')));
   assert.deepEqual(await api(sender.origin, '/api/updates/fan-out', first), result); assert.equal(applied, 1);
   busy = true;
   const rejected = await api(sender.origin, '/api/updates/fan-out', command());

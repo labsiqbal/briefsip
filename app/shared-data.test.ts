@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 
 test('Rust shared SQL keeps schema ownership, host restrictions and bounded results', async t => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-shared-sql-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-shared-sql-'));
   let args: { sql: string; parameters: unknown[] } = { sql: '', parameters: [] };
   const provider = createServer(async (req, res) => {
     const chunks = [];
@@ -84,7 +84,7 @@ test('Rust shared SQL keeps schema ownership, host restrictions and bounded resu
 
   await execute('CREATE TABLE notes(id INTEGER PRIMARY KEY, text TEXT)');
   await execute('INSERT INTO notes(text) VALUES (?)', beta, ['shared']);
-  await assert.rejects(execute('ALTER TABLE notes RENAME TO briefsip_hidden'), /Table name is protected or exceeds 128 characters\./);
+  await assert.rejects(execute('ALTER TABLE notes RENAME TO minarbot_hidden'), /Table name is protected or exceeds 128 characters\./);
   await assert.rejects(execute('ALTER TABLE notes RENAME TO "' + 'n'.repeat(129) + '"'), /128/);
   assert.deepEqual((await execute('SELECT * FROM notes', beta)).rows, [[1, 'shared']]);
   for (const sql of ['DROP TABLE notes', 'ALTER TABLE notes ADD COLUMN private TEXT', 'CREATE INDEX bad_index ON notes(text)']) {
@@ -98,7 +98,7 @@ test('Rust shared SQL keeps schema ownership, host restrictions and bounded resu
   await execute('DROP INDEX note_index');
 
   for (const [name, owner, other] of [
-    ['briefsipXnotes', beta, alpha], ['sqliteXnotes', beta, alpha],
+    ['minarbotXnotes', beta, alpha], ['sqliteXnotes', beta, alpha],
     ['É', alpha, beta], ['é', beta, alpha], ['k', alpha, beta], ['K', beta, alpha],
   ]) {
     await execute(`CREATE TABLE "${name}"(x)`, owner);
@@ -111,8 +111,8 @@ test('Rust shared SQL keeps schema ownership, host restrictions and bounded resu
 
   for (const sql of [
     "ATTACH DATABASE ':memory:' AS other", "VACUUM INTO '/dev/null'", 'PRAGMA writable_schema=ON',
-    'SELECT * FROM briefsip_owners', 'DELETE FROM briefsip_owners', 'DROP TABLE briefsip_owners',
-    'ALTER TABLE briefsip_owners RENAME TO blocked', 'CREATE TABLE briefsip_hidden(x)',
+    'SELECT * FROM minarbot_owners', 'DELETE FROM minarbot_owners', 'DROP TABLE minarbot_owners',
+    'ALTER TABLE minarbot_owners RENAME TO blocked', 'CREATE TABLE minarbot_hidden(x)',
     'CREATE TEMP TABLE temp_data(x)', 'CREATE VIEW view_data AS SELECT * FROM renamed',
     'CREATE TRIGGER trigger_data AFTER INSERT ON renamed BEGIN DELETE FROM renamed; END',
     "SELECT load_extension('/tmp/not-an-extension')", 'BEGIN', 'CREATE VIRTUAL TABLE search USING fts5(text)',

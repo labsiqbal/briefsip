@@ -13,7 +13,7 @@ import { rustConnectorFixture, slackEnvelope, telegramUpdate, waitFor } from './
 
 
 test('Slack artifacts retain exact bytes and upload stages across uncertain completion and grant recovery',async()=>{
- const root=mkdtempSync(join(tmpdir(),'briefsip-slack-output-')),agent=randomUUID(),text='<h1>Exact Slack output</h1>\n';let calls=0,lost=true,sequence=0,question=false;const completed:any[]=[],uploaded:Buffer[]=[],allocated:any[]=[],messages:any[]=[];
+ const root=mkdtempSync(join(tmpdir(),'minarbot-slack-output-')),agent=randomUUID(),text='<h1>Exact Slack output</h1>\n';let calls=0,lost=true,sequence=0,question=false;const completed:any[]=[],uploaded:Buffer[]=[],allocated:any[]=[],messages:any[]=[];
  const provider=createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;const data=JSON.parse(raw);calls++;const tools=data.messages.flatMap((m:any)=>m.tool_calls??[]);let call:any;
   if(!tools.length)call={name:'create_text_file',arguments:JSON.stringify({name:'result.html',text})};else if(question&&!tools.some((c:any)=>c.function.name==='ask_user'))call={name:'ask_user',arguments:JSON.stringify({question:'Continue?',choices:['Yes','No']})};res.end(JSON.stringify({choices:[{finish_reason:call?'tool_calls':'stop',message:call?{tool_calls:[{id:call.name,type:'function',function:call}]}:{content:'File ready'}}]}));});
  await new Promise<void>(resolve=>provider.listen(0,'127.0.0.1',resolve));const pa=provider.address();assert(pa&&typeof pa!=='string');

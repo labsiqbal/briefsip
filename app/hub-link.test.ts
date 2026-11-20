@@ -32,18 +32,18 @@ async function until(check: () => unknown | Promise<unknown>, label = 'condition
 async function api(app: App, path: string, body?: unknown, status = 200): Promise<any> { const response = await fetch(app.origin + path, { method: body === undefined ? 'GET' : 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json', Connection: 'close' }, body: body === undefined ? undefined : JSON.stringify(body) }); const result = await response.json(); assert.equal(response.status, status, JSON.stringify(result)); return result; }
 const who = (subject: string) => ({ issuer: 'https://identity.test', subject, verifiedMailboxes: [`${subject}@example.test`] });
 async function fixture(t: test.TestContext, providerScript?: (body: any) => unknown | Promise<unknown>, stream = false) {
-    const dir = mkdtempSync(join(tmpdir(), 'briefsip-hub-link-')), hubDb = testDatabase(join(dir, 'hub.sqlite'));
+    const dir = mkdtempSync(join(tmpdir(), 'minarbot-hub-link-')), hubDb = testDatabase(join(dir, 'hub.sqlite'));
     initializeHubSchema(hubDb);
     let clock = Date.now();
-    const a = createHubAuthority(hubDb, { domain: 'briefsip.test', mailboxKey: Buffer.alloc(32, 8), now: () => clock });
+    const a = createHubAuthority(hubDb, { domain: 'minarbot.test', mailboxKey: Buffer.alloc(32, 8), now: () => clock });
     const r = createHubRouting(a), signer = generateKeyPairSync('ed25519').privateKey, hubKey = createPublicKey(signer).export({ type: 'spki', format: 'der' }).toString('base64url');
     const alice = a.provisionAccount(who('alice'), true), bob = a.provisionAccount(who('bob'), true), eve = a.provisionAccount(who('eve'), true), project = a.createProject(alice, 'alpha', 'Alpha');
     const ctx = (account: string) => a.resolveProject(project.host, account, project.projectId);
     const invitation = a.invite(ctx(alice), { mailbox: 'bob@example.test', role: 'member', expiresAt: clock + 60000 });
     a.acceptInvite(ctx(bob), invitation.invitationId, invitation.token, who('bob'));
-    const accountsHost = 'accounts.briefsip.test', origin = `https://${accountsHost}`;
+    const accountsHost = 'accounts.minarbot.test', origin = `https://${accountsHost}`;
     const identities = new Map(['alice', 'bob', 'eve'].map(subject => [subject, { ...who(subject), sessionId: `${subject}-session`, expiresAt: clock + 3600000 } satisfies SessionIdentity]));
-    const hub = createHubServer({ authority: a, verifier: createStubVerifier(identities), accountsHost, domain: 'briefsip.test', nodeLink: { origin, signingKey: signer, now: () => clock } });
+    const hub = createHubServer({ authority: a, verifier: createStubVerifier(identities), accountsHost, domain: 'minarbot.test', nodeLink: { origin, signingKey: signer, now: () => clock } });
     const server = hub.server, transport = hub.nodeLink!;
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
@@ -191,7 +191,7 @@ test('dangerous tool waits for exact local owner approval; hub/browser roles can
     const before = await api(node.app, `/api/threads/${(await api(node.app, `/api/agents/${node.agent.id}/threads`))[0]?.id}/turns`);
     assert(!before.some((turn: any) => turn.generatedFiles?.length));
     await api(node.app, '/api/hub-link/approvals', { actionId: prompt.actionId, actionDigest: '0'.repeat(64), approved: true }, 403);
-    const denied = await fetch(node.app.origin + '/api/hub-link/approvals', { method: 'POST', headers: { Origin: 'https://alpha.briefsip.test', 'Content-Type': 'application/json' }, body: JSON.stringify({ actionId: prompt.actionId, actionDigest: prompt.actionDigest, approved: true }) });
+    const denied = await fetch(node.app.origin + '/api/hub-link/approvals', { method: 'POST', headers: { Origin: 'https://alpha.minarbot.test', 'Content-Type': 'application/json' }, body: JSON.stringify({ actionId: prompt.actionId, actionDigest: prompt.actionDigest, approved: true }) });
     assert.equal(denied.status, 403);
     await api(node.app, '/api/hub-link/approvals', { actionId: prompt.actionId, actionDigest: prompt.actionDigest, approved: true });
     const results = await f.done(post.turnIds[0]);
@@ -418,7 +418,7 @@ test('accounts enrollment routes reject project cookies, bad CSRF, fingerprint m
     const project = await f.projectSession(f.alice);
     await f.browser(f.accountsHost, path, value, project, undefined, 401);
     await f.browser(f.project.host, path, value, project, undefined, 404);
-    const crossOrigin = await f.request(f.origin + path, { method: 'POST', headers: { Host: f.accountsHost, Origin: 'https://alpha.briefsip.test', Cookie: session.cookies, 'X-CSRF-Token': session.csrf, 'Content-Type': 'application/json' }, body: JSON.stringify(value) });
+    const crossOrigin = await f.request(f.origin + path, { method: 'POST', headers: { Host: f.accountsHost, Origin: 'https://alpha.minarbot.test', Cookie: session.cookies, 'X-CSRF-Token': session.csrf, 'Content-Type': 'application/json' }, body: JSON.stringify(value) });
     assert.equal(crossOrigin.status, 403);
     await f.browser(f.accountsHost, path, value, session);
     const bob = await f.login(f.bob);

@@ -9,7 +9,7 @@ import { startApp } from './test-bridge.ts';
 import { restoreChatCommand } from './src/conversation-command.ts';
 
 test('attachment-only messages validate, recover and retry in direct chats, threads and rooms', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-attachment-only-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-attachment-only-'));
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     assert.match(raw, /Synthetic attachment|Its contents have not been transcribed/);

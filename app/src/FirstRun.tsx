@@ -43,7 +43,7 @@ export function FirstRun({ request, isClientError, settingsOpen, onOpenEngines, 
 
   return <main className="chat page-view bs-root"><div className="page-scroll">
     <div className="first-run">
-      <PageHeader headingRef={focusHeading} title="Set up Briefsip" />
+      <PageHeader headingRef={focusHeading} title="Set up Minarbot" />
       {error && <Alert tone="error" actions={<Button size="sm" onClick={() => { accounts.reload(); engines.reload(); logins.reload(); }}>Retry</Button>}>Setup status could not be loaded.</Alert>}
       <ol className="first-run__steps" aria-label="Setup progress">
         {steps.map(({ title, icon: Icon }, index) => {

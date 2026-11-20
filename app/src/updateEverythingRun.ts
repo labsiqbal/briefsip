@@ -1,16 +1,17 @@
+import { readProductStorage } from './rename-storage.ts';
 // Adapted from T3 updateEverythingRun.tsx (MIT). See app/t3/provenance.json.
 import type { UpdateCommand, UpdateRun } from './updateEverything.logic.ts';
 
 export type UpdateRequest = <T>(path: string, body?: unknown, signal?: AbortSignal) => Promise<T>;
 type Receipt = { machine: string; status: string; reason?: string; id?: string };
 
-export const updateRunKey = 'briefsip:update-everything';
-export const localUpdateKey = 'briefsip:update';
+export const updateRunKey = 'minarbot:update-everything';
+export const localUpdateKey = 'minarbot:update';
 const validSource = (source: unknown) => source === undefined || source === 'GitHub' || source === 'Local feed';
 const validId = (value: unknown) => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,36}$/.test(value);
 
 export function readSavedUpdateRun(storage: Pick<Storage, 'getItem'>): UpdateRun | null {
-  const raw = storage.getItem(updateRunKey);
+  const raw = readProductStorage(storage, updateRunKey);
   if (!raw) return null;
   const run = JSON.parse(raw) as UpdateRun;
   if (!Array.isArray(run?.rows) || !Array.isArray(run.commands) || !run.commands.length
@@ -33,7 +34,7 @@ export function readSavedUpdateRun(storage: Pick<Storage, 'getItem'>): UpdateRun
 }
 
 export function readLocalUpdate(storage: Pick<Storage, 'getItem'>): Pick<UpdateCommand, 'id' | 'version' | 'source'> | null {
-  const value = JSON.parse(storage.getItem(localUpdateKey) ?? 'null') as Pick<UpdateCommand, 'id' | 'version' | 'source'> | null;
+  const value = JSON.parse(readProductStorage(storage, localUpdateKey) ?? 'null') as Pick<UpdateCommand, 'id' | 'version' | 'source'> | null;
   if (value && (!validId(value.id) || typeof value.version !== 'string' || !validSource(value.source))) throw new Error('Saved update could not be read.');
   return value;
 }

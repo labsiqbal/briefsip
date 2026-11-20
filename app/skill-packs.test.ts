@@ -8,7 +8,7 @@ import { startApp } from './test-bridge.ts';
 import { restoreSkillCommand } from './shared/skill-command.ts';
 
 test('packs pin members and apply lifecycle atomically without replacing manual skills', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-packs-')), options = { database: join(dir, 'state.sqlite') };
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-packs-')), options = { database: join(dir, 'state.sqlite') };
   let app = await startApp(options);
   async function request(path: string, body?: unknown, expected = 200) {
     const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });

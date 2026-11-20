@@ -4,7 +4,7 @@ export function useMessageChanged(onChanged: () => void) {
   const callback = useRef(onChanged); callback.current = onChanged;
   useEffect(() => {
     const changed = () => callback.current();
-    window.addEventListener('briefsip:message-changed', changed);
-    return () => window.removeEventListener('briefsip:message-changed', changed);
+    window.addEventListener('minarbot:message-changed', changed);
+    return () => window.removeEventListener('minarbot:message-changed', changed);
   }, []);
 }

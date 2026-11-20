@@ -18,7 +18,7 @@ const stop=(server:ReturnType<typeof createServer>)=>new Promise<void>(resolve=>
 async function body(req:AsyncIterable<Uint8Array>){const chunks=[];for await(const chunk of req)chunks.push(chunk);return chunks.length?JSON.parse(Buffer.concat(chunks).toString()):{};}
 
 test('connected apps end to end: catalog, accounts, grants, tools, approvals, receipts and no secrets',async()=>{
-  const dir=mkdtempSync(join(tmpdir(),'briefsip-composio-')),database=join(dir,'workspace.sqlite'),priorKey=process.env.COMPOSIO_API_KEY;delete process.env.COMPOSIO_API_KEY;
+  const dir=mkdtempSync(join(tmpdir(),'minarbot-composio-')),database=join(dir,'workspace.sqlite'),priorKey=process.env.COMPOSIO_API_KEY;delete process.env.COMPOSIO_API_KEY;
   const calls:{path:string;method:string;body:any}[]=[],providerBodies:any[]=[],effects:string[]=[],logs:string[]=[],responses:string[]=[];
   let connected=true,connectionPage=false,mode='read',fail=0,tags=['readOnlyHint'];
   const originalError=console.error,originalLog=console.log;console.error=(...args)=>logs.push(args.join(' '));console.log=(...args)=>logs.push(args.join(' '));
@@ -35,7 +35,7 @@ test('connected apps end to end: catalog, accounts, grants, tools, approvals, re
     if(url.pathname==='/api/v3.1/auth_configs')return send(201,{auth_config:{id:'ac_gmail'},credentials:{api_key:canary}});
     if(url.pathname==='/api/v3.1/connected_accounts/link'){assert.equal(data.auth_config_id,'ac_gmail');return send(201,{redirect_url:'https://connect.composio.dev/link/test',api_key:canary});}
     if(url.pathname==='/api/v3.1/connected_accounts'){
-      assert(url.searchParams.get('user_ids')?.startsWith('briefsip-'));
+      assert(url.searchParams.get('user_ids')?.startsWith('minarbot-'));
       if(connectionPage&&!url.searchParams.has('cursor'))return send(200,{items:[],next_cursor:'accounts-2'});
       return send(200,{items:connected?[{id:'ca_1',toolkit:{slug:'gmail'},status:'ACTIVE',state:{token:canary},connection_data:{api_key:canary}}]:[]});
     }
@@ -98,13 +98,13 @@ test('connected apps end to end: catalog, accounts, grants, tools, approvals, re
     const disconnect={id:randomUUID()};await request('/api/connected-apps/disconnect/foreign',{id:randomUUID()},404);await request('/api/connected-apps/disconnect/ca_1',disconnect);await request('/api/connected-apps/disconnect/ca_1',disconnect);assert.equal(calls.filter(row=>row.method==='DELETE').length,1);assert.equal((await request(`/api/agents/${agent.id}/connected-apps`)).items[0].enabled,false);assert.deepEqual((await request('/api/connected-apps/accounts')).items,[]);
     for(fail of [1,2,3,4]){const error=await request('/api/connected-apps',undefined,502);assert(!JSON.stringify(error).includes(canary));}fail=0;
     assert(!responses.join('').includes(canary));assert(!logs.join('').includes(canary));await app.close();closed=true;assert(!readFileSync(database).includes(Buffer.from(canary)));
-    const db=testDatabase(database),installation=db.prepare('SELECT user_id FROM composio_installation').get()!.user_id;assert(String(installation).startsWith('briefsip-'));assert(!String(installation).includes('@'));db.close();
+    const db=testDatabase(database),installation=db.prepare('SELECT user_id FROM composio_installation').get()!.user_id;assert(String(installation).startsWith('minarbot-'));assert(!String(installation).includes('@'));db.close();
   }finally{console.error=originalError;console.log=originalLog;if(!closed)await app.close().catch(()=>{});await stop(provider);await stop(remote);if(priorKey===undefined)delete process.env.COMPOSIO_API_KEY;else process.env.COMPOSIO_API_KEY=priorKey;rmSync(dir,{recursive:true,force:true});}
 });
 
 test('installation API key: validation, encrypted persistence, receipts, runtime precedence and restart', async () => {
   const savedEnv=process.env.COMPOSIO_API_KEY; delete process.env.COMPOSIO_API_KEY;
-  const directory=mkdtempSync(join(tmpdir(),'briefsip-installation-key-')),database=join(directory,'app.sqlite');
+  const directory=mkdtempSync(join(tmpdir(),'minarbot-installation-key-')),database=join(directory,'app.sqlite');
   const storedKey='INSTALLATION_CANARY_KEY_K9m2s8v4', replacement='REPLACEMENT_CANARY_KEY_V7r8b9n2', environment='ENVIRONMENT_CANARY_KEY_T8n5z2p4';
   const remoteCalls:{key:string;path:string}[]=[],responses:string[]=[];
   const remote=createServer((req,res)=>{const key=String(req.headers['x-api-key']);remoteCalls.push({key,path:req.url!});res.setHeader('Content-Type','application/json');if(![storedKey,replacement,environment].includes(key)){res.statusCode=401;return res.end(JSON.stringify({error:key}));}res.end(JSON.stringify(req.url!.endsWith('/toolkits/categories')?{items:[]}:{items:[{slug:'gmail',name:'Gmail',meta:{description:key},composio_managed_auth_schemes:['OAUTH2']}]}));});
@@ -150,7 +150,7 @@ test('installation API key: validation, encrypted persistence, receipts, runtime
 });
 
 test('Rust key replacement and removal reset identity, grants, policies and pending calls atomically', async t => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-rust-key-reset-')), database = join(directory, 'db.sqlite');
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-rust-key-reset-')), database = join(directory, 'db.sqlite');
   const agent = randomUUID(), grant = `/api/agents/${agent}/connected-apps/gmail`;
   const turns = `/api/agents/${agent}/turns`;
   let dispatches = 0, validation = 0;

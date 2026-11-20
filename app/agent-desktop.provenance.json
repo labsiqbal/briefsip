@@ -1,5 +1,5 @@
 {
-  "adapted": "Hermes Agent Bot Desktop runtime, lease/lock, display allocation and thumbnail concepts; rewritten in TypeScript for Briefsip.",
+  "adapted": "Hermes Agent Bot Desktop runtime, lease/lock, display allocation and thumbnail concepts; rewritten in TypeScript for Minarbot.",
   "repository": "https://github.com/NousResearch/hermes-agent",
   "revision": "d923a5eb487a17c0a68801bba9ef0f56c81040a8",
   "sources": [
@@ -20,13 +20,13 @@
       "tui_gateway/methods_display_watch.py"
     ],
     "revision": "d923a5eb487a17c0a68801bba9ef0f56c81040a8",
-    "logic": "Hermes single-holder lease, persistent holder/since/epoch, request reason, and tool-level human-control fence translated into TypeScript. Briefsip uses SQLite revisions, its own durable turn pause/resume journal, screenshot hand-back note, authenticated noVNC RFB relay and three-viewer cap; no Hermes runtime or UI copied."
+    "logic": "Hermes single-holder lease, persistent holder/since/epoch, request reason, and tool-level human-control fence translated into TypeScript. Minarbot uses SQLite revisions, its own durable turn pause/resume journal, screenshot hand-back note, authenticated noVNC RFB relay and three-viewer cap; no Hermes runtime or UI copied."
   },
   "vnc_relay": {
     "repository": "https://github.com/nickvasilescu/bot-hq",
     "revision": "decf9a215cddd8792a5f20f4a11a87d4dffa6d15",
     "source": "server/src/vnc.ts",
-    "adaptation": "RFB message framing and server-side watch-mode input filtering rewritten for Briefsip; no Bot HQ runtime or assets used.",
+    "adaptation": "RFB message framing and server-side watch-mode input filtering rewritten for Minarbot; no Bot HQ runtime or assets used.",
     "license": "MIT; notice in app/src/ui/NOTICE"
   },
   "dependencies": [
@@ -39,7 +39,7 @@
   ],
   "desktop_session": {
     "source": "tools/bot_desktop/launcher.sh",
-    "localPath": "crates/briefsip-server/src/computer/desktop_supervisor.rs",
-    "adaptation": "Rust supervisor for TigerVNC Unix socket, component-wise Xfce, terminal launcher and private D-Bus. Briefsip owns the bwrap mounts, network namespace and Unix proxy relay."
+    "localPath": "crates/minarbot-server/src/computer/desktop_supervisor.rs",
+    "adaptation": "Rust supervisor for TigerVNC Unix socket, component-wise Xfce, terminal launcher and private D-Bus. Minarbot owns the bwrap mounts, network namespace and Unix proxy relay."
   }
 }

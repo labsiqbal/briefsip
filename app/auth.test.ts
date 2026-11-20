@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 
-const config: AuthConfig = { secretKey: 'sk_test_fixture', publishableKey: `pk_test_${Buffer.from('fixture.clerk.accounts.dev$').toString('base64')}`, issuer: 'https://fixture.clerk.accounts.dev', origin: 'https://briefsip.example' };
+const config: AuthConfig = { secretKey: 'sk_test_fixture', publishableKey: `pk_test_${Buffer.from('fixture.clerk.accounts.dev$').toString('base64')}`, issuer: 'https://fixture.clerk.accounts.dev', origin: 'https://minarbot.example' };
 const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
 function jwt(overrides: Record<string, unknown> = {}, privateKey = keys.privateKey, kid = 'fixture') {
   const now = Math.floor(Date.now() / 1000);
@@ -46,7 +46,7 @@ async function session(origin: string, token?: string, options: { method?: strin
 }
 
 test('Rust verifies signed human sessions before internal account mapping', async t => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-rust-auth-')), database = join(dir, 'db.sqlite');
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-rust-auth-')), database = join(dir, 'db.sqlite');
   let app: Awaited<ReturnType<typeof startRustServer>> | undefined;
   let db: DatabaseSync | undefined;
   t.after(async () => {
@@ -82,7 +82,7 @@ test('Rust verifies signed human sessions before internal account mapping', asyn
 });
 
 test('Rust logout denial survives disk reopen, old JWT expiry and upstream recovery', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-rust-logout-')), database = join(dir, 'db.sqlite');
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-rust-logout-')), database = join(dir, 'db.sqlite');
   let upstream = false, observedDenial: string | undefined;
   const api = createServer((req, res) => {
     if (req.method !== 'POST' || req.url !== '/v1/sessions/sess_fixture/revoke') {
@@ -132,7 +132,7 @@ test('Rust logout denial survives disk reopen, old JWT expiry and upstream recov
 });
 
 test('canonical listen failure leaves no maintenance running on a closed database', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-listen-failure-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-listen-failure-'));
   const occupied = createServer();
   await new Promise<void>(resolve => occupied.listen(0, '127.0.0.1', resolve));
   const address = occupied.address(); assert(address && typeof address !== 'string');
@@ -144,7 +144,7 @@ test('canonical listen failure leaves no maintenance running on a closed databas
 });
 
 test('canonical HTTP verifies identity, isolates projects and cannot dispatch legacy routes', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-canonical-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-canonical-'));
   const clerk = createClerkClient({ secretKey: config.secretKey, publishableKey: config.publishableKey, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), telemetry: { disabled: true } });
   const app = await startCanonicalApp({ database: join(dir, 'db.sqlite'), auth: { ...config, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), development: true }, clerk });
   const send = async (path: string, method = 'GET', body?: { requestId: string; [key: string]: unknown }, token = jwt()) => {
@@ -170,7 +170,7 @@ test('canonical HTTP verifies identity, isolates projects and cannot dispatch le
 });
 
 test('canonical invitation creates durable outbox and worker delivers through configured provider', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-canonical-mail-')); let delivered = 0; const bodies: string[] = [];
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-canonical-mail-')); let delivered = 0; const bodies: string[] = [];
   const provider = createServer(async (req, res) => { let body = ''; for await (const chunk of req) body += chunk; bodies.push(body); delivered++; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ id: 'remote-mail-1' })); });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve)); const address = provider.address(); assert(address && typeof address !== 'string');
   const mailKey = Buffer.alloc(32, 7), lookupKey = Buffer.alloc(32, 9), oldKeyId = randomUUID();
@@ -193,6 +193,6 @@ test('canonical invitation creates durable outbox and worker delivers through co
     mail = { ...mail, keyId: randomUUID(), key: Buffer.alloc(32, 11) };
     app = await startCanonicalApp({ ...options, mailApiKey: 'resend_fixture' });
     for (let n = 0; n < 100 && !delivered; n++) await new Promise(resolve => setTimeout(resolve, 10));
-    assert.equal(delivered, 1); assert.match(bodies[0], /member@example.com/); assert.match(bodies[0], /Briefsip/);
+    assert.equal(delivered, 1); assert.match(bodies[0], /member@example.com/); assert.match(bodies[0], /Minarbot/);
   } finally { try { await app.close(); } finally { await cleanup(); } }
 });

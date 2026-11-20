@@ -28,7 +28,7 @@ test('Rust project environment validates names and UTF-8 byte bounds', async () 
   try {
     const agent = await f.agent(), project = await f.project(agent.id, 'Environment validation');
     const path = `/api/projects/${project.id}/environment`;
-    for (const name of ['PATH', 'HOME', 'LD_PRELOAD', 'NODE_OPTIONS', 'BRIEFSIP_TOKEN', 'BASH_ENV', 'bad', 'A-B', 'A'.repeat(65)]) {
+    for (const name of ['PATH', 'HOME', 'LD_PRELOAD', 'NODE_OPTIONS', 'MINARBOT_TOKEN', 'BASH_ENV', 'bad', 'A-B', 'A'.repeat(65)]) {
       await f.request(path, { id: randomUUID(), name, value: 'x' }, 400);
     }
     for (const value of ['é'.repeat(8193), 'a\0b']) {
@@ -71,7 +71,7 @@ for(const runtime of ['codex','claude'] as const)test(`${runtime}: project envir
   const f=await fixture({baseURL:'http://127.0.0.1:1/v1',workspaces:[{agent:agentId,directory:direct,write:false}],harness:{executables:{[runtime]:binary}}});
   try{
     const a=await f.agent('Member',agentId),p=await f.project(a.id,'Environment A',true),b=await f.project(a.id,'Environment B',true),base=`/api/projects/${p.id}/environment`;
-    for(const name of ['PATH','HOME','LD_LIBRARY_PATH','NODE_OPTIONS','BRIEFSIP_TOKEN'])await f.request(base,{id:randomUUID(),name,value:secret},400);
+    for(const name of ['PATH','HOME','LD_LIBRARY_PATH','NODE_OPTIONS','MINARBOT_TOKEN'])await f.request(base,{id:randomUUID(),name,value:secret},400);
     await f.request(base,{id:randomUUID(),name:'TOKEN',value:'x'.repeat(16385)},400);
     const command={id:randomUUID(),name:'PROJECT_TEST_TOKEN',value:secret,updated:null};const saved=await f.request(base,command);assert.deepEqual(await f.request(base,command),saved);
     assert.equal((statSync(f.database+'.project-env-key').mode&0o777),0o600);assert(!JSON.stringify(await f.request(base)).includes(secret));

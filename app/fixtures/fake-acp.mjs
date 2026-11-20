@@ -13,7 +13,7 @@ function update(update) { send({ method: 'session/update', params: { sessionId, 
 function ask(method, params) { const id = ++request; send({ id, method, params: { sessionId, ...params } }); return new Promise(resolve => waiting.set(id, resolve)); }
 for await (const line of createInterface({ input: process.stdin })) {
   const value = JSON.parse(line);
-  appendFileSync('fake-acp-log.jsonl', JSON.stringify({ ...value, canary: process.env.BRIEFSIP_HARNESS_CANARY }) + '\n');
+  appendFileSync('fake-acp-log.jsonl', JSON.stringify({ ...value, canary: process.env.MINARBOT_HARNESS_CANARY }) + '\n');
   if (value.type === 'extension_ui_response') {
     send({ type: 'tool_execution_end', toolCallId: 'pi-tool', toolName: 'bash', isError: !value.confirmed });
     send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'Pi answer.' } });
@@ -24,7 +24,7 @@ for await (const line of createInterface({ input: process.stdin })) {
     send({ type: 'message_start', message: { role: 'assistant' } });
     if (value.message.includes('WAIT')) { send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'Waiting.' } }); continue; }
     send({ type: 'tool_execution_start', toolCallId: 'pi-tool', toolName: 'bash' });
-    send({ type: 'extension_ui_request', method: 'confirm', title: 'Briefsip tool approval', id: 'pi-approval', message: JSON.stringify({ toolName: 'bash', input: { command: 'echo fixture' } }) }); continue;
+    send({ type: 'extension_ui_request', method: 'confirm', title: 'Minarbot tool approval', id: 'pi-approval', message: JSON.stringify({ toolName: 'bash', input: { command: 'echo fixture' } }) }); continue;
   }
   if (value.type) {
     if (value.type === 'get_state' && process.argv.includes('--append-system-prompt') && !process.argv.includes('--extension')) throw new Error('Pi context must retain permission extension');
@@ -44,7 +44,7 @@ for await (const line of createInterface({ input: process.stdin })) {
   if (value.method === 'session/set_model') { reply(value.id, {}); continue; }
   if (value.method === 'session/cancel') {
     await new Promise(resolve => setTimeout(resolve, 50));
-    process.stderr.write(`ACP cancelled ${process.env.BRIEFSIP_MCP_TOKEN}\n`);
+    process.stderr.write(`ACP cancelled ${process.env.MINARBOT_MCP_TOKEN}\n`);
     writeFileSync('cancel-received', 'yes');
     if (prompt) reply(prompt, { stopReason: 'cancelled' });
     continue;

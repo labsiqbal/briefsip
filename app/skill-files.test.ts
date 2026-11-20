@@ -17,7 +17,7 @@ const files = [
 ];
 test('skill folders preserve exact files and reject invalid or unsupported inputs as a whole', () => {
   const parsed = parseSkillFiles(files); assert.equal(parsed.description, 'Use for examples.'); assert.deepEqual(parsed.files, files);
-  assert.deepEqual(parseSkillFiles(JSON.parse(JSON.stringify({ format: 'briefsip-skill-folder', version: 1, files })).files).files, files);
+  assert.deepEqual(parseSkillFiles(JSON.parse(JSON.stringify({ format: 'minarbot-skill-folder', version: 1, files })).files).files, files);
   const command = { path: '/api/skills', body: { id: randomUUID(), revision: 0, files } };
   assert.deepEqual(restoreSkillCommand(JSON.stringify(command)), command);
   for (const path of ['/etc/passwd', '../secret', 'a/../b', 'a\\b', 'a//b', 'a:', '', 'SKILL.md', 'skill.md']) assert.throws(() => parseSkillFiles([...files, { path, content: 'secret' }]));
@@ -29,7 +29,7 @@ test('skill folders preserve exact files and reject invalid or unsupported input
 });
 
 test('folder revisions, receipts and pinned file tools survive reload without foreign or revoked access', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-skill-files-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-skill-files-'));
   let target = '', offset = 0, filePath = 'references/detail.md', mode = 'file', results: any[] = [];
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;

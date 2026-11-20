@@ -19,7 +19,7 @@ export function BackupPanel({}: { onClose: () => void }) {
       if (!response.ok) await readJson(response, 'Backup could not be created. Try again.');
       const blob = await response.blob();
       if (pending.signal.aborted) return;
-      downloadBlob(blob, 'briefsip-workspace.sqlite'); setDownloaded(true);
+      downloadBlob(blob, 'minarbot-workspace.sqlite'); setDownloaded(true);
     } catch (error) { if (!pending.signal.aborted) setError(error instanceof TypeError ? 'Connection lost. Try downloading the backup again.' : error instanceof Error ? error.message : 'Backup download failed.'); }
     finally { if (!pending.signal.aborted) { controller.current = null; setBusy(false); } }
   }
@@ -32,8 +32,8 @@ export function BackupPanel({}: { onClose: () => void }) {
     <Dialog open={restoreOpen} onOpenChange={setRestoreOpen} title="Restore backup" size="lg" footer={<Button onClick={() => setRestoreOpen(false)}>Close</Button>}>
       <div className="k-stack set4-detail">
         <p>Restore only trusted backups. Recovery uses a new database and does not overwrite the old workspace. Schedules, webhooks, and script access are disabled; unfinished work is held for review.</p>
-        <p>Run from the application directory on the server computer:</p><CodeBlock label="Backup restore command">./bin/briefsip-server restore workspace BACKUP.sqlite --db /new-directory/briefsip.sqlite</CodeBlock>
-        <p>The destination directory must already exist. To use the restored data, point BRIEFSIP_DATA_DIR to that directory when starting the application. Check the results and settings before enabling automation again.</p>
+        <p>Run from the application directory on the server computer:</p><CodeBlock label="Backup restore command">./bin/minarbot-server restore workspace BACKUP.sqlite --db /new-directory/minarbot.sqlite</CodeBlock>
+        <p>The destination directory must already exist. To use the restored data, point MINARBOT_DATA_DIR to that directory when starting the application. Check the results and settings before enabling automation again.</p>
         <p className="k-field__hint">Backup includes conversations, files, instructions, routines, workflows, results and webhook secrets. Server-environment provider settings and browser drafts are excluded. Restore does not configure deployment or credentials.</p>
       </div>
     </Dialog>

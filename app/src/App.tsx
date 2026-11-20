@@ -1,3 +1,4 @@
+import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { ConnectionError, HttpError, readJson } from './http';
 import { HiddenAgents } from './AgentSidebar';
 import { useConversationRequests } from './hooks/useConversationRequests';
@@ -80,7 +81,7 @@ import './ui/details.css';
 import './ui/modals.css';
 import './ui/config.css';
 import './ui/legacy.css';
-import './ui/briefsip.css';
+import './ui/minarbot.css';
 import './ui/kit.css';
 import './ui/density.css';
 import './Routines.css';
@@ -126,16 +127,16 @@ type Pending = ChatCommand;
 const statusNames: Record<string, string> = { queued: 'Queued', running: 'Replying', done: 'Done', failed: 'Failed', interrupted: 'Interrupted', cancelled: 'Cancelled' };
 async function api<T>(path: string, data?: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(path, { ...(data ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) } : {}), signal })
-    .catch(() => { throw new ConnectionError('Briefsip connection lost. Check your connection, then try again.'); });
+    .catch(() => { throw new ConnectionError('Minarbot connection lost. Check your connection, then try again.'); });
   return readJson<T>(response);
 }
 const message = (error: unknown) => error instanceof Error ? error.message : 'Connection failed. Try again.';
 
 
 function RoomStop({ room, path, archived, onStopped }: { room: RoomView; path: string; archived: boolean; onStopped: () => void }) {
-  const key = `briefsip:room-stop:${path}:${room.root}`;
+  const key = `minarbot:room-stop:${path}:${room.root}`;
   const [pending, setPending] = useState<{ id: string; generation: string } | null>(() => {
-    try { const value = JSON.parse(sessionStorage.getItem(key) ?? 'null'); return value && typeof value.id === 'string' && value.generation === room.generation ? value : null; } catch { return null; }
+    try { const value = JSON.parse(readProductStorage(sessionStorage, key) ?? 'null'); return value && typeof value.id === 'string' && value.generation === room.generation ? value : null; } catch { return null; }
   });
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   async function stop() {
@@ -144,7 +145,7 @@ function RoomStop({ room, path, archived, onStopped }: { room: RoomView; path: s
     try {
       sessionStorage.setItem(key, JSON.stringify(request)); setPending(request); setBusy(true); setError('');
       await api(`${path.replace(/\/turns$/, '')}/discussions/${room.root}/stop`, request);
-      sessionStorage.removeItem(key); setPending(null); onStopped();
+      removeProductStorage(sessionStorage, key); setPending(null); onStopped();
     } catch (error) { setError(message(error)); }
     finally { setBusy(false); }
   }
@@ -183,18 +184,18 @@ function TaskControls({ turn, path, members, archived, skip = false, onChangeMod
 }
 
 function ForkAnswer({ path, turn, onOpen }: { path: string; turn: Turn; onOpen?: (agent: string, thread: string) => void }) {
-  const key = `briefsip:fork:${turn.id}`;
+  const key = `minarbot:fork:${turn.id}`;
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const flight = useRef(false);
   async function fork() {
     if (flight.current) return;
     flight.current = true; setBusy(true); setError('');
     try {
-      const saved = sessionStorage.getItem(key), id = saved ?? crypto.randomUUID();
+      const saved = readProductStorage(sessionStorage, key), id = saved ?? crypto.randomUUID();
       if (!/^[a-f0-9-]{36}$/i.test(id)) throw new Error('Fork recovery could not be read. Check browser storage before retrying.');
       sessionStorage.setItem(key, id);
       const result = await api<Thread>(`${path}/${turn.id}/fork`, { id });
-      sessionStorage.removeItem(key);
+      removeProductStorage(sessionStorage, key);
       onOpen?.(result.agent, result.id);
     } catch (error) { setError(message(error)); }
     finally { flight.current = false; setBusy(false); }
@@ -221,7 +222,7 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
   const [showMemory, setShowMemory] = useState(false);
   const nextFrame = useNextFrame();
   const [focusedCard, setFocusedCard] = useState<string>();
-  const [focusedTask, setFocusedTask] = useState(() => { try { const key = `briefsip:focus:${scope}`, id = sessionStorage.getItem(key) ?? ''; sessionStorage.removeItem(key); return /^[a-f0-9-]{36}$/i.test(id) ? id : ''; } catch { return ''; } });
+  const [focusedTask, setFocusedTask] = useState(() => { try { const key = `minarbot:focus:${scope}`, id = readProductStorage(sessionStorage, key) ?? ''; removeProductStorage(sessionStorage, key); return /^[a-f0-9-]{36}$/i.test(id) ? id : ''; } catch { return ''; } });
   const [query, setQuery] = useState('');
   const [finding, setFinding] = useState(false);
   const [historyPages, setHistoryPages] = useState<number[]>([]);
@@ -233,10 +234,10 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
   const findHistory = useRef<Turn[] | null>(null);
   const inheritedLoaded = useRef(false);
   const [pastedFiles, setPastedFiles] = useState<File[]>([]);
-  const attachmentKey = `briefsip:attachments:${scope}`;
-  const [attached, setAttached] = useState<string[]>(() => { try { const ids = JSON.parse(sessionStorage.getItem(attachmentKey) ?? '[]'); return Array.isArray(ids) && ids.length <= 4 && ids.every(id => typeof id === 'string') ? ids : []; } catch { return []; } });
+  const attachmentKey = `minarbot:attachments:${scope}`;
+  const [attached, setAttached] = useState<string[]>(() => { try { const ids = JSON.parse(readProductStorage(sessionStorage, attachmentKey) ?? '[]'); return Array.isArray(ids) && ids.length <= 4 && ids.every(id => typeof id === 'string') ? ids : []; } catch { return []; } });
   function attach(ids: string[]) { try { sessionStorage.setItem(attachmentKey, JSON.stringify(ids)); setAttached(ids); } catch { setError('Attachment selection was not saved. Check browser storage.'); } }
-  const storageKey = `briefsip:pending:${scope}`;
+  const storageKey = `minarbot:pending:${scope}`;
   const [turns, setTurns] = useState<Turn[] | null>(null);
   const [inheritedContext, setInheritedContext] = useState<ForkContext | null>(null);
   const optimistic = useOptimisticTurns<Turn>();
@@ -251,10 +252,10 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
   const needsEngineLogin = blockedAgent?.provider_available === false && isLoginBinding(blockedAgent.provider_account ?? '');
   const needsProvider = blockedAgent?.provider_available === false || !blockedAgent && targets.length > 0 && !canSend;
   const firstMessage = firstRun && !thread && !turns?.length;
-  const draftKey = `briefsip:draft:${scope}`;
-  const [draft, setDraft] = useState(() => { try { return sessionStorage.getItem(draftKey) ?? ''; } catch { return ''; } });
+  const draftKey = `minarbot:draft:${scope}`;
+  const [draft, setDraft] = useState(() => { try { return readProductStorage(sessionStorage, draftKey) ?? ''; } catch { return ''; } });
   const [recovery] = useState(() => {
-    try { return { command: restoreChatCommand(sessionStorage.getItem(storageKey), !!channel), blocked: false }; }
+    try { return { command: restoreChatCommand(readProductStorage(sessionStorage, storageKey), !!channel), blocked: false }; }
     catch { return { command: null, blocked: true }; }
   });
   const [pending, setPending] = useState<Pending | null>(recovery.command), [blocked, setBlocked] = useState(recovery.blocked);
@@ -322,7 +323,7 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
   }, [focusedTask, focusedCard, turns, before, finding]);
   useEffect(() => {
     if (!requestActive.current && pending && turns?.some(turn => turn.id === pending.id && !turn.optimistic)) {
-      try { sessionStorage.removeItem(storageKey); sessionStorage.removeItem(draftKey); sessionStorage.removeItem(attachmentKey); } catch { /* The same ID remains safe to retry. */ }
+      try { removeProductStorage(sessionStorage, storageKey); removeProductStorage(sessionStorage, draftKey); removeProductStorage(sessionStorage, attachmentKey); } catch { /* The same ID remains safe to retry. */ }
       setPending(null); setDraft(''); setAttached([]); setError('');
     }
   }, [turns, pending, storageKey, draftKey, attachmentKey]);
@@ -343,11 +344,11 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
       // A remounted conversation owns recovery and any newer draft after navigation.
       if (!mounted.current) return;
       setAddressedTurn('');
-      sessionStorage.removeItem(storageKey); sessionStorage.removeItem(draftKey); sessionStorage.removeItem(attachmentKey); setPending(null); setDraft(''); setAttached([]); setFocusedTask(''); setHistoryPages([]); setQuery(''); setFinding(false);
+      removeProductStorage(sessionStorage, storageKey); removeProductStorage(sessionStorage, draftKey); removeProductStorage(sessionStorage, attachmentKey); setPending(null); setDraft(''); setAttached([]); setFocusedTask(''); setHistoryPages([]); setQuery(''); setFinding(false);
     } catch (error) {
       if (!mounted.current) return;
       if (error instanceof HttpError && (error.status < 500 || error.status === 503 && !error.restarting)) {
-        try { sessionStorage.removeItem(storageKey); sessionStorage.setItem(draftKey, request.text); } catch { /* Keep the draft in memory if storage fails. */ }
+        try { removeProductStorage(sessionStorage, storageKey); sessionStorage.setItem(draftKey, request.text); } catch { /* Keep the draft in memory if storage fails. */ }
         optimistic.remove(request.id); setTurns(rows => rows?.filter(turn => turn.id !== request.id) ?? null); setQueueTurns(rows => rows.filter(turn => turn.id !== request.id));
         setPending(null); setDraft(request.text);
       }
@@ -387,7 +388,7 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
   const openOutput = useCallback((file: { id: string; name: string }) => { rightPanel.selectFile({ name: file.name, path: `${path.replace(/\/turns$/, '')}/panel/files/${file.id}` }); setDetailsOpen(true); }, [rightPanel.selectFile, path, setDetailsOpen]);
   usePanelFileRequests(turns, openOutput);
   if (showMemory) return <PageView><Suspense fallback={<p className="empty" role="status">Loading memory...</p>}><MemoryPanel key={scope} path={`/api/${channel ? 'channels' : 'agents'}/${agent.id}/memory`} channel={!!channel} archived={!!channel?.archived} request={api} onClose={() => { setShowMemory(false); nextFrame(() => document.querySelector<HTMLButtonElement>('.chat__pill')?.focus()); }} /></Suspense></PageView>;
-  const refreshTurns = () => { window.dispatchEvent(new Event('briefsip:message-changed')); void Promise.all([api<Turn[]>(path), api<typeof activeTurns>(path.replace(/\/turns$/, '/dispatch'))]).then(([data, active]) => { setQueueTurns(optimistic.merge(data)); if (!focusedTask && !before && !finding) setTurns(optimistic.merge(mergeStream(findHistory.current ? mergeHistory(findHistory.current, data) : data))); setActiveTurns(active); }).catch(error => setError(message(error))); };
+  const refreshTurns = () => { window.dispatchEvent(new Event('minarbot:message-changed')); void Promise.all([api<Turn[]>(path), api<typeof activeTurns>(path.replace(/\/turns$/, '/dispatch'))]).then(([data, active]) => { setQueueTurns(optimistic.merge(data)); if (!focusedTask && !before && !finding) setTurns(optimistic.merge(mergeStream(findHistory.current ? mergeHistory(findHistory.current, data) : data))); setActiveTurns(active); }).catch(error => setError(message(error))); };
   const queued = (turn: Turn) => !channel && activeTurns.some(active => active.id !== turn.id) && turn.status === 'queued' && !turn.paused && !isTurnWaitingForInput(turn) && !turn.events?.some(event => event.status === 'waiting') && !turn.parent && !turn.waiting_for && !turn.routineReport && !turn.workflow_run && !turn.activity?.calls.length && !turn.agentMessages?.length;
   const runningTurn = !channel ? activeTurns[0] : undefined;
   const runningRoom = channel ? turns?.find(turn => turn.room?.active)?.room : undefined;
@@ -442,7 +443,7 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
               {!!before && <button type="button" className="link-btn" onClick={() => { focusHistory.current = true; setTurns(null); setHistoryPages(historyPages.slice(0, -1)); nearBottom.current = true; }}>Newer messages</button>}
             </div>}
             {inheritedContext && <ForkHistory context={inheritedContext} scope={path.slice(0, -6)} />}
-            {thread?.fork && <div className="fork-origin" aria-label="Fork origin" title={new Date(thread.fork.created).toLocaleString('en-US')}><span>Forked from <a className="link-btn" href={`#turn-${thread.fork.cutoff_turn}`} onClick={event => { event.preventDefault(); const origin = thread.fork!; try { sessionStorage.setItem(`briefsip:focus:${origin.source_kind === 'channel' ? `channel:${origin.source_id}` : origin.source_kind === 'thread' ? `thread:${origin.source_id}` : origin.source_agent}`, origin.cutoff_turn); } catch { /* Conversation link remains usable without focus recovery. */ } if (origin.source_kind === 'channel') onOpenChannel?.(origin.source_id); else onOpenAgent?.(origin.source_agent, origin.source_kind === 'thread' ? origin.source_id : ''); }}>{thread.fork.source_name}</a></span></div>}
+            {thread?.fork && <div className="fork-origin" aria-label="Fork origin" title={new Date(thread.fork.created).toLocaleString('en-US')}><span>Forked from <a className="link-btn" href={`#turn-${thread.fork.cutoff_turn}`} onClick={event => { event.preventDefault(); const origin = thread.fork!; try { sessionStorage.setItem(`minarbot:focus:${origin.source_kind === 'channel' ? `channel:${origin.source_id}` : origin.source_kind === 'thread' ? `thread:${origin.source_id}` : origin.source_agent}`, origin.cutoff_turn); } catch { /* Conversation link remains usable without focus recovery. */ } if (origin.source_kind === 'channel') onOpenChannel?.(origin.source_id); else onOpenAgent?.(origin.source_agent, origin.source_kind === 'thread' ? origin.source_id : ''); }}>{thread.fork.source_name}</a></span></div>}
             {readError && <p role="alert" className="chat-notice is-error">{readError} History will be retried.</p>}
             {turns === null ? <p className="empty-chat__sub" role="status">Loading conversation...</p>
               : turns.length === 0 && before ? <p className="empty-chat__sub" role="status">Start of history reached. Select Newer messages to return.</p>
@@ -497,7 +498,7 @@ function Chat({ agent, configured, firstRun, channel, thread, members = [], onRe
         </p>}
         {firstMessage && canSend && <p className="composer__note">Send first message</p>}
         {error && <div className="composer__error" role="alert"><span>{error} {pending && 'Use Retry send to check the same request without creating a duplicate message.'}</span></div>}
-        {blocked && <div className="composer__error" role="alert"><span>Message recovery data could not be read. Sending is blocked. Check history to confirm the previous message was not sent.</span><Button size="sm" variant="ghost" onClick={async () => { if (!await confirm({ title: 'Discard recovery data?', description: 'The previous message may already have been received. Check history before sending another message.', confirm: 'Discard message recovery', danger: true })) return; try { sessionStorage.removeItem(storageKey); setBlocked(false); setError(''); nextFrame(() => composer.current?.focus()); } catch { setError('Recovery data could not be deleted. Check site storage.'); } }}>Discard message recovery</Button></div>}
+        {blocked && <div className="composer__error" role="alert"><span>Message recovery data could not be read. Sending is blocked. Check history to confirm the previous message was not sent.</span><Button size="sm" variant="ghost" onClick={async () => { if (!await confirm({ title: 'Discard recovery data?', description: 'The previous message may already have been received. Check history before sending another message.', confirm: 'Discard message recovery', danger: true })) return; try { removeProductStorage(sessionStorage, storageKey); setBlocked(false); setError(''); nextFrame(() => composer.current?.focus()); } catch { setError('Recovery data could not be deleted. Check site storage.'); } }}>Discard message recovery</Button></div>}
         <QueuedRunsControl turns={queueTurns.filter(queued)} path={path} target={dispatchTarget} request={api} archived={archived} onChanged={refreshTurns} onOrder={() => setQueueOrderOpen(true)} />
         <ChatComposer attachments={attachments.composer} hasAttachments={!!attached.length} onPasteFiles={files => { if (pastedFiles.length) { setError('Wait for pasted files to finish uploading.'); return; } setPastedFiles(files); }} mentions={channel ? members : []} onMention={value => { setDraft(value); try { sessionStorage.setItem(draftKey, value); } catch { setError('Draft was not saved. Copy your message before leaving.'); } }} label={channel ? `Message #${channel.section_name ?? channel.name}` : `Message ${agent.name}`} inputRef={composer} multiline={draft.includes('\n')} onSubmit={send} onSendKey={event => { void send(event, (event.ctrlKey || event.metaKey) && canSteer ? 'steer' : 'queue'); }} onAttach={attachments.choose} attachmentDisabledReason={archived || blocked || !!pending || busy || attachments.uploading ? 'Attachments unavailable' : undefined} actions={attachments.recordingAction}
           recipient={channel && activeTurns.length > 0 ? <Select size="sm" label="Addressed member" value={dispatchTarget?.id ?? ''} disabled={busy || !!pending || blocked} onChange={setAddressedTurn} options={[{ value: '', label: 'Everyone' }, ...activeTurns.map(turn => ({ value: turn.id, label: members.find(member => member.id === turn.agent)?.name ?? turn.agent }))]} /> : undefined}
@@ -590,7 +591,7 @@ function UpcomingRoutines({ agent, onManage }: { agent: string; onManage: () => 
 }
 function pendingRoutine(agent: string): RoutineCommand | null {
   try {
-    const value = JSON.parse(sessionStorage.getItem(`briefsip:routine-command:${agent}`) ?? 'null'), data = value?.data;
+    const value = JSON.parse(readProductStorage(sessionStorage, `minarbot:routine-command:${agent}`) ?? 'null'), data = value?.data;
     return value && typeof data?.id === 'string' && typeof data.name === 'string' && typeof data.prompt === 'string' && typeof data.enabled === 'boolean'
       && (data.schedule && typeof data.schedule === 'object' && typeof data.schedule.kind === 'string' && typeof data.zone === 'string'
         || Number.isSafeInteger(data.nextAt) && data.nextAt > 0 && data.nextAt <= 253370764799999 && (data.intervalSeconds === null || Number.isSafeInteger(data.intervalSeconds)))
@@ -598,10 +599,10 @@ function pendingRoutine(agent: string): RoutineCommand | null {
   } catch { return null; }
 }
 function ScriptAccess({ agent }: { agent: string }) {
-  const key = `briefsip:script-access:${agent}`;
+  const key = `minarbot:script-access:${agent}`;
   const [access, setAccess] = useState<{ enabled: number; revision: number; configured: boolean } | null>(null);
   const [pending, setPending] = useState<{ id: string; revision: number; enabled: boolean } | null>(() => {
-    try { const value = JSON.parse(sessionStorage.getItem(key) ?? 'null'); return value && typeof value.id === 'string' && Number.isSafeInteger(value.revision) && typeof value.enabled === 'boolean' ? value : null; } catch { return null; }
+    try { const value = JSON.parse(readProductStorage(sessionStorage, key) ?? 'null'); return value && typeof value.id === 'string' && Number.isSafeInteger(value.revision) && typeof value.enabled === 'boolean' ? value : null; } catch { return null; }
   });
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [reload, setReload] = useState(0);
   const mounted = useRef(true);
@@ -623,10 +624,10 @@ function ScriptAccess({ agent }: { agent: string }) {
       await api(`/api/agents/${agent}/scripts`, request);
       const latest = await api<NonNullable<typeof access>>(`/api/agents/${agent}/scripts`);
       if (!mounted.current) return;
-      sessionStorage.removeItem(key); setPending(null); setAccess(latest);
+      removeProductStorage(sessionStorage, key); setPending(null); setAccess(latest);
     } catch (error) {
       if (!mounted.current) return;
-      if (error instanceof HttpError && error.status < 500) { sessionStorage.removeItem(key); setPending(null); setAccess(null); }
+      if (error instanceof HttpError && error.status < 500) { removeProductStorage(sessionStorage, key); setPending(null); setAccess(null); }
       setError(message(error));
     } finally { if (mounted.current) setBusy(false); }
   }
@@ -641,9 +642,9 @@ function ScriptAccess({ agent }: { agent: string }) {
 type WebhookConfig = { route: string; revision: number; url: string; event_name: string; filters: unknown[]; secret?: string };
 function WebhookSettings({ routine, onBack }: { routine: Routine; onBack: () => void }) {
   type Command = { id: string; revision: number; rotate: boolean; eventName: string; filters: unknown[] };
-  const key = `briefsip:webhook:${routine.id}`, path = `/api/routines/${routine.id}/webhook`;
+  const key = `minarbot:webhook:${routine.id}`, path = `/api/routines/${routine.id}/webhook`;
   const [pending, setPending] = useState<Command | null>(() => {
-    try { const value = JSON.parse(sessionStorage.getItem(key) ?? 'null'); return value && typeof value.id === 'string' && Number.isSafeInteger(value.revision) && typeof value.rotate === 'boolean' && typeof value.eventName === 'string' && Array.isArray(value.filters) ? value : null; } catch { return null; }
+    try { const value = JSON.parse(readProductStorage(sessionStorage, key) ?? 'null'); return value && typeof value.id === 'string' && Number.isSafeInteger(value.revision) && typeof value.rotate === 'boolean' && typeof value.eventName === 'string' && Array.isArray(value.filters) ? value : null; } catch { return null; }
   });
   const [hook, setHook] = useState<WebhookConfig | null | undefined>(undefined), [secret, setSecret] = useState('');
   const [events, setEvents] = useState<{ delivery: string; received: number; result: { outcome: string; reason?: string } }[]>([]);
@@ -672,15 +673,15 @@ function WebhookSettings({ routine, onBack }: { routine: Routine; onBack: () => 
       const latest = await api<WebhookConfig | null>(path);
       if (!mounted.current) return;
       if (!latest || latest.revision !== result.revision || latest.route !== result.route) throw new HttpError(409, 'Webhook changed. Reload before using the secret.');
-      sessionStorage.removeItem(key); setPending(null); setHook(latest); setSecret(result.secret ?? '');
+      removeProductStorage(sessionStorage, key); setPending(null); setHook(latest); setSecret(result.secret ?? '');
     } catch (error) {
       if (!mounted.current) return;
-      if (error instanceof HttpError && error.status < 500) { sessionStorage.removeItem(key); setPending(null); setConflict(true); }
+      if (error instanceof HttpError && error.status < 500) { removeProductStorage(sessionStorage, key); setPending(null); setConflict(true); }
       setError(message(error));
     } finally { if (mounted.current) setBusy(false); }
   }
   return <div className="k-page bs-root">
-    <PageHeader title={`Webhook ${routine.name}`} description="The local URL receives signed events while Briefsip is running. Payloads are sent to the provider. This URL is not available from the internet."
+    <PageHeader title={`Webhook ${routine.name}`} description="The local URL receives signed events while Minarbot is running. Payloads are sent to the provider. This URL is not available from the internet."
       actions={<><Button variant="ghost" onClick={onBack}>Back</Button><IconButton label="Reload webhook" disabled={busy} onClick={() => { setSecret(''); setReload(value => value + 1); }}><RefreshCw size={15} aria-hidden /></IconButton></>} />
     {hook && <Field label="Webhook URL"><Input readOnly value={hook.url} onFocus={event => event.target.select()} /></Field>}
     {secret && <Field label="New secret" hint="Copy this to the sender’s secret storage. The secret is not saved in the browser and will not be shown again after the page closes."><Input readOnly value={secret} autoComplete="off" spellCheck={false} onFocus={event => event.target.select()} /></Field>}
@@ -709,9 +710,9 @@ function FlowDiagram({ graph, agents }: { graph: FlowGraph; agents: Agent[] }) {
 function FlowEditor({ routine, onOpen }: { routine: Routine; onOpen: (thread: string, owner: string) => Promise<void> }) {
   const optionName = (name: string) => name.length > 24 ? name.slice(0, 21) + '...' : name;
   type Command = { id: string; revision: number; links: FlowLink[] };
-  const key = `briefsip:flow:${routine.id}`, path = `/api/routines/${routine.id}/flow`;
+  const key = `minarbot:flow:${routine.id}`, path = `/api/routines/${routine.id}/flow`;
   const [pending, setPending] = useState<Command | null>(() => {
-    try { const value = JSON.parse(sessionStorage.getItem(key) ?? 'null'); return value && typeof value.id === 'string' && Number.isSafeInteger(value.revision) && Array.isArray(value.links) ? value : null; } catch { return null; }
+    try { const value = JSON.parse(readProductStorage(sessionStorage, key) ?? 'null'); return value && typeof value.id === 'string' && Number.isSafeInteger(value.revision) && Array.isArray(value.links) ? value : null; } catch { return null; }
   });
   const [agents, setAgents] = useState<Agent[]>([]), [links, setLinks] = useState<FlowLink[]>([]), [revision, setRevision] = useState(0);
   const [runs, setRuns] = useState<FlowRun[]>([]), [runError, setRunError] = useState('');
@@ -745,10 +746,10 @@ function FlowEditor({ routine, onOpen }: { routine: Routine; onOpen: (thread: st
       await api(path, request);
       const latest = await api<{ graph: FlowGraph; revision: number }>(path);
       if (!mounted.current) return;
-      sessionStorage.removeItem(key); setPending(null); setLinks(latest.graph.links); setRevision(latest.revision);
+      removeProductStorage(sessionStorage, key); setPending(null); setLinks(latest.graph.links); setRevision(latest.revision);
     } catch (error) {
       if (!mounted.current) return;
-      if (error instanceof HttpError && error.status < 500) { sessionStorage.removeItem(key); setPending(null); setConflict(true); }
+      if (error instanceof HttpError && error.status < 500) { removeProductStorage(sessionStorage, key); setPending(null); setConflict(true); }
       setError(message(error));
     } finally { if (mounted.current) setBusy(false); }
   }
@@ -781,10 +782,10 @@ function relativeRun(value: string | number) {
 const runStatus = (run: { paused?: number | null; no_update?: number | null; status?: string | null }) => run.paused ? 'Paused' : run.no_update ? 'No updates' : statusNames[run.status ?? ''] ?? run.status ?? 'Never run';
 function RoutinesHub({ agents, projects, initialAgent, onOpen }: { agents: Agent[]; projects: import('../shared/local-project').LocalProject[]; initialAgent?: string; onOpen: (owner: string, thread: string) => void }) {
   type Command = { routine: string; action: 'test' | 'edit' | 'delete'; data: { id: string; revision: number } & Record<string, unknown> };
-  const key = 'briefsip:routine-hub-command';
+  const key = 'minarbot:routine-hub-command';
   const [recovered] = useState(() => {
     try {
-      const raw = sessionStorage.getItem(key); if (!raw) return { command: null, blocked: false };
+      const raw = readProductStorage(sessionStorage, key); if (!raw) return { command: null, blocked: false };
       const value = JSON.parse(raw);
       if (!value || !['test','edit','delete'].includes(value.action) || !/^[a-f0-9-]{36}$/i.test(value.routine) || !/^[a-f0-9-]{36}$/i.test(value.data?.id) || !Number.isSafeInteger(value.data?.revision)) throw new Error('Invalid command');
       return { command: value as Command, blocked: false };
@@ -816,8 +817,8 @@ function RoutinesHub({ agents, projects, initialAgent, onOpen }: { agents: Agent
       // Retain the original request before sending; retries never regenerate an ID or payload.
       sessionStorage.setItem(key, JSON.stringify(request)); setPending(request);
       const result = await api<Routine>(`/api/routines/${request.routine}/${request.action}`, request.data);
-      sessionStorage.removeItem(key);
-      if (request.action === 'test') sessionStorage.removeItem(`briefsip:routine-test:${request.routine}`);
+      removeProductStorage(sessionStorage, key);
+      if (request.action === 'test') removeProductStorage(sessionStorage, `minarbot:routine-test:${request.routine}`);
       if (!mounted.current) return;
       loadVersion.current++; setPending(null);
       if (request.action === 'edit') { setDetail(current => current?.id === request.routine ? { ...current, ...result } : current); setPage(current => current && ({ ...current, routines: current.routines.map(row => row.id === request.routine ? { ...row, ...result } : row) })); }
@@ -826,7 +827,7 @@ function RoutinesHub({ agents, projects, initialAgent, onOpen }: { agents: Agent
       if (request.action === 'delete') setDetail(null);
     } catch (error) {
       if (!mounted.current) return;
-      if (error instanceof HttpError && error.status < 500) { sessionStorage.removeItem(key); if (request.action === 'test') sessionStorage.removeItem(`briefsip:routine-test:${request.routine}`); setPending(null); setReload(value => value + 1); }
+      if (error instanceof HttpError && error.status < 500) { removeProductStorage(sessionStorage, key); if (request.action === 'test') removeProductStorage(sessionStorage, `minarbot:routine-test:${request.routine}`); setPending(null); setReload(value => value + 1); }
       setError(message(error));
     } finally { flight.current = false; if (mounted.current) setBusy(false); }
   }
@@ -837,7 +838,7 @@ function RoutinesHub({ agents, projects, initialAgent, onOpen }: { agents: Agent
   function run(routine: Routine) {
     if (locked) return;
     try {
-      const saved = sessionStorage.getItem(`briefsip:routine-test:${routine.id}`), data = saved ? JSON.parse(saved) : { id: crypto.randomUUID(), revision: routine.revision };
+      const saved = readProductStorage(sessionStorage, `minarbot:routine-test:${routine.id}`), data = saved ? JSON.parse(saved) : { id: crypto.randomUUID(), revision: routine.revision };
       if (!data || typeof data.id !== 'string' || !Number.isSafeInteger(data.revision)) throw new Error('Previous run request could not be read. Check browser storage and run history before retrying.');
       void command({ routine: routine.id, action: 'test', data });
     } catch (error) { setError(message(error)); }
@@ -848,7 +849,7 @@ function RoutinesHub({ agents, projects, initialAgent, onOpen }: { agents: Agent
   }
   async function discard() {
     if (!await confirm({ title: 'Discard routine recovery?', description: 'Check routines and run history first. The previous request may already have succeeded.', confirm: 'Discard recovery', danger: true })) return;
-    try { sessionStorage.removeItem(key); setPending(null); setBlocked(false); setReload(value => value + 1); } catch (error) { setError(message(error)); }
+    try { removeProductStorage(sessionStorage, key); setPending(null); setBlocked(false); setReload(value => value + 1); } catch (error) { setError(message(error)); }
   }
   const recovery = <>{blocked && <Alert tone="error" title="Routine recovery could not be read" actions={<Button disabled={busy} onClick={() => void discard()}>Discard recovery</Button>}>Check routine settings and run history before discarding.</Alert>}{pending && <RecoveryAlert inFlight={busy} tone="warn" title="Request is not confirmed yet" actions={<><Button disabled={busy} busy={busy} onClick={() => void command(pending)}>Retry request</Button><Button disabled={busy} onClick={() => void discard()}>Discard recovery</Button></>}>Retry the original request to check its result without duplicating work.</RecoveryAlert>}{error && <Alert tone="error" actions={<Button size="sm" onClick={() => { setError(''); setReload(value => value + 1); }}>Reload routines</Button>}>{error}</Alert>}{notice && <p role="status" className="k-field__hint">{notice}</p>}</>;
   const hasFilters = Object.values(filters).some(Boolean) || !!after;
@@ -878,7 +879,7 @@ function RoutineDetail({ routine, locked, recovery, onBack, onEdit, onRun, onTog
     <Tabs value={tab} onChange={setTab} label="Routine sections" tabs={[{ value: 'overview', label: 'Overview' }, { value: 'flow', label: 'Flow' }]}>
       <TabPanel value="overview"><div className="k-stack"><Card><Row title="Trigger" meta={routineTriggerLabel(routine)} trailing={<Badge>{routine.enabled ? 'Enabled' : 'Paused'}</Badge>} /><Row title="Project" meta={routine.project_name ?? 'No project'} /><Row title="Report to" meta={routineReportLabel(routine)} /><Row title="Next run" meta={routine.enabled && routine.trigger === 'schedule' ? new Date(routine.next_at).toLocaleString('en-US') : routine.enabled ? 'On demand' : 'Paused'} /><Row title="Last run" meta={routine.last_created ? <>{runStatus({ status: routine.last_status, paused: routine.last_paused, no_update: routine.last_no_update })} · {relativeRun(routine.last_created)}</> : 'Never run'} trailing={routine.last_thread && <Button size="sm" onClick={() => onOpen(routine.agent, routine.last_thread!)}>Open last run</Button>} /><Row title="Flow" meta={Number(routine.flow_agents ?? 1) > 1 ? `${routine.flow_agents} agents` : 'Single agent'} /></Card>
       <Section title="Instructions"><p className="routine-instructions">{routine.prompt}</p></Section>
-      <div className="k-row-actions">{routine.trigger === 'webhook' && <Button onClick={onWebhook}>Webhook settings</Button>}<a className="k-link" href={`/api/agents/${routine.agent}/routines/calendar.ics`} download="briefsip-routines.ics">Download agent calendar</a></div>
+      <div className="k-row-actions">{routine.trigger === 'webhook' && <Button onClick={onWebhook}>Webhook settings</Button>}<a className="k-link" href={`/api/agents/${routine.agent}/routines/calendar.ics`} download="minarbot-routines.ics">Download agent calendar</a></div>
       <Section title="Run history">{error && <Alert tone="error">{error}</Alert>}{runs === null ? <SkeletonRows /> : !runs.length ? <EmptyState title="No runs yet" /> : <Card>{runs.map(run => <Row key={run.turn} title={new Date(run.scheduled_at ?? run.created).toLocaleString('en-US')} meta={<><Badge>{runStatus(run)}</Badge><span>{run.source === 'webhook' ? 'Webhook' : run.source === 'script' ? 'Local script' : run.scheduled_at === null ? 'Manual' : 'Schedule'} · {relativeRun(run.created)}</span></>} trailing={<Button size="sm" onClick={() => onOpen(routine.agent, run.thread)}>Open run</Button>}>{run.missed > 0 && <p className="k-field__hint">{run.missed} missed schedules were combined into this run.</p>}{run.error && <Alert tone="error">{run.error}</Alert>}</Row>)}</Card>}</Section>
       <Collapsible title="Local script access"><ScriptAccess key={routine.agent} agent={routine.agent} /></Collapsible>
       </div></TabPanel>
@@ -888,10 +889,10 @@ function RoutineDetail({ routine, locked, recovery, onBack, onEdit, onRun, onTog
 }
 function RoutineForm({ owner, agents, projects, routine, onBack, onSaved }: { owner: Agent; agents: Agent[]; projects: import('../shared/local-project').LocalProject[]; routine: Routine | null; onBack: () => void; onSaved: (routine: Routine) => void }) {
   const [agent, setAgent] = useState(owner);
-  const key = `briefsip:routine-command:${agent.id}`;
+  const key = `minarbot:routine-command:${agent.id}`;
   const pending = useRef<RoutineCommand | null>(pendingRoutine(owner.id));
   const [initial] = useState(() => pending.current);
-  const [blocked, setBlocked] = useState(() => { try { return sessionStorage.getItem(key) !== null && !pending.current; } catch { return true; } });
+  const [blocked, setBlocked] = useState(() => { try { return readProductStorage(sessionStorage, key) !== null && !pending.current; } catch { return true; } });
   const confirm = useConfirm();
   const routineId = initial?.routineId ?? routine?.id ?? null;
   const revision = initial?.data.revision ?? routine?.revision;
@@ -917,22 +918,22 @@ function RoutineForm({ owner, agents, projects, routine, onBack, onSaved }: { ow
     try {
       const updated = await api<Routine>(request.routineId ? `/api/routines/${request.routineId}/edit` : `/api/agents/${agent.id}/routines`, request.data);
       if (!mounted.current) return;
-      if (pendingRoutine(agent.id)?.data.id === request.data.id) sessionStorage.removeItem(key);
+      if (pendingRoutine(agent.id)?.data.id === request.data.id) removeProductStorage(sessionStorage, key);
       pending.current = null; onSaved(updated);
     } catch (error) {
       if (!mounted.current) return;
-      if (error instanceof HttpError && error.status < 500) { if (pendingRoutine(agent.id)?.data.id === request.data.id) sessionStorage.removeItem(key); pending.current = null; }
+      if (error instanceof HttpError && error.status < 500) { if (pendingRoutine(agent.id)?.data.id === request.data.id) removeProductStorage(sessionStorage, key); pending.current = null; }
       if (error instanceof HttpError && error.status === 409) setConflict(true);
       setError(message(error));
     } finally { if (mounted.current) setBusy(false); }
   }
   return <Dialog open size="lg" onOpenChange={open => { if (!open && !busy) onBack(); }} title={initial?.routineId || routine ? 'Edit routine' : 'New routine'}
-    description="Each run opens a separate conversation and can share its result. Briefsip must be running for schedules."
+    description="Each run opens a separate conversation and can share its result. Minarbot must be running for schedules."
     footer={<><span className="k-dialog__foot-start"><Checkbox checked={enabled} onChange={setEnabled} disabled={!!pending.current || busy || blocked} label="Enabled" /></span><Button disabled={busy} onClick={onBack}>{conflict ? 'Discard changes and reload' : 'Cancel'}</Button><Button type="submit" form="routine-form" variant="primary" busy={busy} disabled={busy || conflict || blocked || !pending.current && trigger === 'schedule' && !timing}>{busy ? 'Saving...' : pending.current ? 'Retry save' : 'Save routine'}</Button></>}>
     <form id="routine-form" className="k-fieldset bs-root" onSubmit={save}>
       {blocked && <Alert tone="error" title="Routine recovery could not be read" actions={<Button onClick={async () => {
         if (!await confirm({ title: 'Discard routine save recovery?', description: 'Check routines and run history first. The previous save may already have succeeded.', confirm: 'Discard recovery', danger: true })) return;
-        try { sessionStorage.removeItem(key); setBlocked(false); } catch { setError('Browser storage is unavailable. Check site storage before saving.'); }
+        try { removeProductStorage(sessionStorage, key); setBlocked(false); } catch { setError('Browser storage is unavailable. Check site storage before saving.'); }
       }}>Discard recovery</Button>}>Check saved routines before discarding this request.</Alert>}
       <div className="k-grid-2"><Field label="Owner agent" hint={routineId ? 'The owner cannot change after creation.' : undefined}><Select value={agent.id} disabled={!!routineId || !!pending.current || busy || blocked} onChange={id => { const next = agents.find(item => item.id === id); if (next) {setAgent(next); if(project && !projects.find(item=>item.id===project)?.members.some(member=>member.agent===next.id)) {setProject(null);setReportTo('direct');}} }} options={agents.map(item => ({ value: item.id, label: item.name, disabled: item.id !== agent.id && !!pendingRoutine(item.id) }))} /></Field>
       <Field label="Name"><Input name="name" required maxLength={80} readOnly={!!pending.current} defaultValue={snapshot?.name ?? routine?.name} placeholder="Morning briefing" /></Field></div>
@@ -955,8 +956,8 @@ function AgentConversations({ agent, attention, onRestored, configured, firstRun
   const [form, setForm] = useState<Thread | null>(null), [loaded, setLoaded] = useState(false);
   const [showArchived, setShowArchived] = useState(false), [busy, setBusy] = useState(false);
   const confirm = useConfirm();
-  const commandKey = `briefsip:thread-command:${agent.id}`;
-  const [recovery] = useState(() => { try { return { command: restoreThreadCommand(sessionStorage.getItem(commandKey), agent.id), invalid: false }; } catch { return { command: null, invalid: true }; } });
+  const commandKey = `minarbot:thread-command:${agent.id}`;
+  const [recovery] = useState(() => { try { return { command: restoreThreadCommand(readProductStorage(sessionStorage, commandKey), agent.id), invalid: false }; } catch { return { command: null, invalid: true }; } });
   const [pending, setPending] = useState<ThreadCommand | null>(recovery.command), [invalid, setInvalid] = useState(recovery.invalid);
   const flight = useRef(false), actionFlight = useRef(false), renameTarget = useRef('');
   const [showWorkspace, setShowWorkspace] = useState(false);
@@ -999,13 +1000,13 @@ function AgentConversations({ agent, attention, onRestored, configured, firstRun
     try {
       sessionStorage.setItem(commandKey, JSON.stringify(command)); setPending(command);
       const result = await api<Thread>(command.path, command.data);
-      sessionStorage.removeItem(commandKey); setPending(null); setForm(null);
+      removeProductStorage(sessionStorage, commandKey); setPending(null); setForm(null);
       if (version === navigation.current) {
         const hidden = result.deleted || result.archived && !showArchived;
         await load(command.path === `/api/agents/${agent.id}/threads` ? result.id : selected === result.id && hidden ? '' : selected, true);
       }
     } catch (error) {
-      if (error instanceof HttpError && error.status < 500) { sessionStorage.removeItem(commandKey); setPending(null); }
+      if (error instanceof HttpError && error.status < 500) { removeProductStorage(sessionStorage, commandKey); setPending(null); }
       setError(message(error));
     } finally { flight.current = false; setBusy(false); }
   }
@@ -1041,7 +1042,7 @@ function AgentConversations({ agent, attention, onRestored, configured, firstRun
   const visible = threads.filter(item => showArchived || !item.archived), deliveries = visible.filter(item => item.delivery);
   const conversations = <>
     {error && <Alert tone="error" actions={<Button size="sm" disabled={busy} onClick={() => void load().catch(() => {})}>Reload conversations</Button>}>{error}</Alert>}
-    {(pending || invalid) && <RecoveryAlert inFlight={busy} tone="warn" title={invalid ? 'Conversation recovery is unavailable' : 'Conversation change is not confirmed'} actions={<>{pending && <Button size="sm" busy={busy} onClick={() => void execute(pending)}>Retry change</Button>}<Button size="sm" disabled={busy} onClick={async () => { if (await confirm({ title: 'Discard pending change?', description: 'Check conversations first. The change may already have been saved.', confirm: 'Discard', danger: true })) { try { sessionStorage.removeItem(commandKey); setPending(null); setInvalid(false); } catch { setError('Recovery could not be cleared. Check browser storage.'); } } }}>Discard</Button></>} />}
+    {(pending || invalid) && <RecoveryAlert inFlight={busy} tone="warn" title={invalid ? 'Conversation recovery is unavailable' : 'Conversation change is not confirmed'} actions={<>{pending && <Button size="sm" busy={busy} onClick={() => void execute(pending)}>Retry change</Button>}<Button size="sm" disabled={busy} onClick={async () => { if (await confirm({ title: 'Discard pending change?', description: 'Check conversations first. The change may already have been saved.', confirm: 'Discard', danger: true })) { try { removeProductStorage(sessionStorage, commandKey); setPending(null); setInvalid(false); } catch { setError('Recovery could not be cleared. Check browser storage.'); } } }}>Discard</Button></>} />}
     <section aria-label="Agent conversations">
       <div className="section-label section-label--row"><span>Conversations</span><div className="details-list-actions"><DropdownMenu.Root><DropdownMenu.Trigger asChild><IconButton label="Conversation filters"><Filter size={15} aria-hidden /></IconButton></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content className="k-pop k-menu" align="end" sideOffset={6}><DropdownMenu.CheckboxItem className="k-menu__item" checked={showArchived} onCheckedChange={next => { setShowArchived(next); if (!next && thread?.archived) select(''); }}><DropdownMenu.ItemIndicator><Check size={14} aria-hidden /></DropdownMenu.ItemIndicator>Show archived</DropdownMenu.CheckboxItem></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{!locked && <IconButton label="New conversation" tooltip="New conversation (Ctrl/Cmd+Shift+O)" aria-keyshortcuts="Control+Shift+O Meta+Shift+O" onClick={openForm}><Plus size={15} aria-hidden /></IconButton>}</div></div>
       <div className="panel-card">
@@ -1069,9 +1070,9 @@ function InlineConversationName({ thread, busy, onSave, onCancel }: { thread: Th
 
 function ChannelForm({ agents, channel, onCreated, onCancel, onReload }: { agents: Agent[]; channel?: Channel; onCreated: (channel: Channel) => void; onCancel: () => void; onReload?: () => void }) {
   const confirm = useConfirm();
-  const storageKey = `briefsip:channel-command:${channel?.id ?? 'new'}`;
+  const storageKey = `minarbot:channel-command:${channel?.id ?? 'new'}`;
   const [recovery] = useState(() => {
-    try { return { command: restoreChannelCommand(sessionStorage.getItem(storageKey), !!channel), blocked: false }; }
+    try { return { command: restoreChannelCommand(readProductStorage(sessionStorage, storageKey), !!channel), blocked: false }; }
     catch { return { command: null, blocked: true }; }
   });
   const [pending, setPending] = useState<ChannelCommand | null>(recovery.command), [blocked, setBlocked] = useState(recovery.blocked);
@@ -1084,7 +1085,7 @@ function ChannelForm({ agents, channel, onCreated, onCancel, onReload }: { agent
   const locked = busy || !!pending || blocked;
   async function discard() {
     if (!await confirm({ title: 'Discard section recovery data?', description: 'Changes may already be saved. Check the list and section settings before creating a new request.', confirm: 'Discard', danger: true })) return;
-    try { sessionStorage.removeItem(storageKey); setPending(null); setBlocked(false); setError(''); nameInput.current?.focus(); }
+    try { removeProductStorage(sessionStorage, storageKey); setPending(null); setBlocked(false); setError(''); nameInput.current?.focus(); }
     catch { setError('Recovery data could not be deleted. Check site storage.'); }
   }
   async function create(event: FormEvent<HTMLFormElement>) {
@@ -1096,12 +1097,12 @@ function ChannelForm({ agents, channel, onCreated, onCancel, onReload }: { agent
     try {
       const saved = await api<Channel>(channel ? `/api/channels/${channel.id}/edit` : '/api/channels', data);
       if (!mounted.current) return;
-      sessionStorage.removeItem(storageKey); setPending(null); onCreated(saved);
+      removeProductStorage(sessionStorage, storageKey); setPending(null); onCreated(saved);
     }
     catch (error) {
       if (!mounted.current) return;
       if (error instanceof HttpError && error.status < 500) {
-        try { sessionStorage.removeItem(storageKey); setPending(null); }
+        try { removeProductStorage(sessionStorage, storageKey); setPending(null); }
         catch { setBlocked(true); }
       }
       setError(message(error));
@@ -1135,15 +1136,15 @@ function ChannelForm({ agents, channel, onCreated, onCancel, onReload }: { agent
 const settingsGroups: { label: string; items: { id: SettingsSection; label: string; icon: typeof Settings }[] }[] = [
   { label: 'Preferences', items: [{ id: 'general', icon: SlidersHorizontal, label: 'General' }, { id: 'appearance', icon: Palette, label: 'Appearance' }] },
   { label: 'Agents', items: [{ id: 'skills', icon: BookOpen, label: 'Skills' }] },
-  { label: 'Connections', items: [{ id: 'providers', icon: Server, label: 'Providers' }, { id: 'engines', icon: Cpu, label: 'Engines' }, { id: 'hub', icon: LinkIcon, label: 'briefsip.com' }, { id: 'connected-apps', icon: Plug, label: 'Connected apps' }, { id: 'mcp', icon: Cable, label: 'MCP connections' }] },
+  { label: 'Connections', items: [{ id: 'providers', icon: Server, label: 'Providers' }, { id: 'engines', icon: Cpu, label: 'Engines' }, { id: 'hub', icon: LinkIcon, label: 'minarbot.com' }, { id: 'connected-apps', icon: Plug, label: 'Connected apps' }, { id: 'mcp', icon: Cable, label: 'MCP connections' }] },
   { label: 'System', items: [{ id: 'machines', icon: Monitor, label: 'Machines' }, { id: 'devices', icon: Smartphone, label: 'Devices' }, { id: 'updates', icon: Download, label: 'Updates' }] },
   { label: 'Data', items: [{ id: 'usage', icon: BarChart3, label: 'Usage' }, { id: 'data', icon: Database, label: 'Shared data' }, { id: 'backup', icon: Archive, label: 'Backup & restore' }] },
   { label: 'Advanced', items: [{ id: 'mcp-server', icon: KeyRound, label: 'External access' }] },
 ];
 type Dialog = 'agent' | 'project' | 'edit' | null;
-const collapsedKey = 'briefsip:sidebar-collapsed';
-const machineGroupsKey = 'briefsip:sidebar-machine-groups';
-const sidebarTabKey = 'briefsip:sidebar-tab';
+const collapsedKey = 'minarbot:sidebar-collapsed';
+const machineGroupsKey = 'minarbot:sidebar-machine-groups';
+const sidebarTabKey = 'minarbot:sidebar-tab';
 type SidebarTab = 'agents' | 'projects';
 const machineStatus = { online: 'Online', offline: 'Offline', unauthorized: 'Unauthorized', 'version-mismatch': 'Version mismatch' };
 
@@ -1207,15 +1208,15 @@ function App() {
   const projectThread = projectConversation ? { project: projectConversation.project!, agent: selected, thread: projectConversation.id, conversation: projectConversation } : null;
   const [dialog, setDialog] = useState<Dialog>(null);
   const [firstRunAgent, setFirstRunAgent] = useState('');
-  const [notificationsMuted, setNotificationsMuted] = useState(() => { try { return localStorage.getItem(notificationMuteKey) === '1'; } catch { return false; } });
+  const [notificationsMuted, setNotificationsMuted] = useState(() => { try { return readProductStorage(localStorage, notificationMuteKey) === '1'; } catch { return false; } });
   const [notificationError, setNotificationError] = useState('');
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(() => { try { return localStorage.getItem(sidebarTabKey) === 'projects' ? 'projects' : 'agents'; } catch { return 'agents'; } });
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(() => { try { return readProductStorage(localStorage, sidebarTabKey) === 'projects' ? 'projects' : 'agents'; } catch { return 'agents'; } });
   const [searches, setSearches] = useState({ agents: '', projects: '' });
   const search = searches[sidebarTab], query = search.trim().toLocaleLowerCase();
   const [searchMachineGroups, setSearchMachineGroups] = useState<Record<string, boolean>>({});
   const [onlyOnline, setOnlyOnline] = useState(false), [onlyNeedsYou, setOnlyNeedsYou] = useState(false), [filterMenu, setFilterMenu] = useState(false);
-  const [machineGroups, setMachineGroups] = useState<Record<string, boolean>>(() => { try { const value: unknown = JSON.parse(localStorage.getItem(machineGroupsKey) ?? '{}'); return value && typeof value === 'object' && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).filter(([, expanded]) => typeof expanded === 'boolean')) as Record<string, boolean> : {}; } catch { return {}; } });
-  const [desktopCollapsed, setCollapsedState] = useState(() => { try { return localStorage.getItem(collapsedKey) === '1'; } catch { return false; } });
+  const [machineGroups, setMachineGroups] = useState<Record<string, boolean>>(() => { try { const value: unknown = JSON.parse(readProductStorage(localStorage, machineGroupsKey) ?? '{}'); return value && typeof value === 'object' && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).filter(([, expanded]) => typeof expanded === 'boolean')) as Record<string, boolean> : {}; } catch { return {}; } });
+  const [desktopCollapsed, setCollapsedState] = useState(() => { try { return readProductStorage(localStorage, collapsedKey) === '1'; } catch { return false; } });
   const narrowSidebar = useNarrowSidebar(), [narrowOpen, setNarrowOpen] = useState(false);
   const collapsed = narrowSidebar ? !narrowOpen : desktopCollapsed;
   const [detailsVisible] = useDetailsOpen();
@@ -1340,7 +1341,7 @@ function App() {
   const remoteMachines = remoteMachinesState.machines.filter(machine => !onlyNeedsYou && (!onlyOnline || machine.status === 'online')).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   const anyMatchingAgents = localAgents.length > 0 || matchingHiddenAgents.length > 0 || remoteMachines.some(machine => machine.agents.some(item => matches(item.name, summaryFor(`${item.id}@${machine.id}`)?.preview, item.role)));
   const switcherItems: SwitcherItem[] = [
-    ...(agent && !route.room && !route.project && !route.machine && !route.view ? [{ id: 'new-conversation', label: 'New conversation', detail: 'Ctrl/Cmd+Shift+O', icon: <Plus size={16} aria-hidden />, group: 'Create', onSelect: () => { setSettings(null); switcherFrame(() => window.dispatchEvent(new Event('briefsip:new-conversation'))); } }] : []),
+    ...(agent && !route.room && !route.project && !route.machine && !route.view ? [{ id: 'new-conversation', label: 'New conversation', detail: 'Ctrl/Cmd+Shift+O', icon: <Plus size={16} aria-hidden />, group: 'Create', onSelect: () => { setSettings(null); switcherFrame(() => window.dispatchEvent(new Event('minarbot:new-conversation'))); } }] : []),
     ...(directory?.agents.filter(agent => !agent.hidden).map(agent => ({ id: `agent:${agent.id}`, label: agent.name, icon: <AgentAvatar agent={agent} size={24} />, group: 'Agents', onSelect: () => { setSettings(null); openAgent(agent.id); } })) ?? []),
     ...hiddenAgents.map(agent => ({ id: `restore:${agent.id}`, label: `Restore ${agent.name}`, group: 'Hidden agents', icon: <AgentAvatar agent={agent} size={24} />, onSelect: () => { setSettings(null); setSidebarTab('agents'); void restoreAgent(agent); } })),
     ...remoteMachines.flatMap(machine => machine.agents.map(agent => ({ id: `remote:${machine.id}:${agent.id}`, label: agent.name, icon: <AgentAvatar agent={agent} size={24} />, detail: machine.name, group: 'Agents', onSelect: () => { setSettings(null); openThread(`${agent.id}@${machine.id}`, ''); } }))),
@@ -1372,12 +1373,12 @@ function App() {
   else content = <FirstRun request={api} isClientError={error => error instanceof HttpError && error.status < 500} settingsOpen={!!settings} onOpenEngines={() => setSettings('engines')} onCreated={item => { setFirstRunAgent(item.id); created(item); focusComposer(); }} />;
   const navigation = <aside ref={sidebar.ref} className="sidebar bs-root" style={{ width: `${sidebar.width}px` }} aria-label="Workspace navigation" onClick={event => { if (narrowSidebar && (event.target as HTMLElement).closest('.bot-row, .project-navigation__name, .project-navigation__room')) setNarrowOpen(false); }}>
       <div className="sidebar__titlebar">
-        <span className="sidebar__bots-label">Briefsip</span>
+        <span className="sidebar__bots-label">Minarbot</span>
         <nav className="sidebar__controls" aria-label="Automation">
           <IconButton label="Routines" aria-current={view === 'routines' ? 'page' : undefined} disabled={!directory} onClick={() => { setRoutineAgent(''); setView('routines'); setDialog(null); }}><CalendarClock size={16} aria-hidden /></IconButton>
           <IconButton label="Workflows" aria-current={view === 'workflows' ? 'page' : undefined} disabled={!directory} onClick={() => { setView('workflows'); setDialog(null); }}><WorkflowIcon size={16} aria-hidden /></IconButton>
           <ActionMenu label="Create new" trigger={<IconButton label="Create new"><Plus size={16} aria-hidden /></IconButton>} items={[
-            ...(agent ? [{ label: 'New conversation', icon: <MessageSquare size={15} aria-hidden />, hint: 'Ctrl/Cmd+Shift+O', onSelect: () => { openAgent(selected); switcherFrame(() => window.dispatchEvent(new Event('briefsip:new-conversation'))); } }] : []),
+            ...(agent ? [{ label: 'New conversation', icon: <MessageSquare size={15} aria-hidden />, hint: 'Ctrl/Cmd+Shift+O', onSelect: () => { openAgent(selected); switcherFrame(() => window.dispatchEvent(new Event('minarbot:new-conversation'))); } }] : []),
             { label: 'New agent', icon: <Plus size={15} aria-hidden />, onSelect: () => setDialog('agent'), disabled: !directory },
             { label: 'Import template', icon: <Download size={15} aria-hidden />, onSelect: () => setWorkspaceDialog('import'), disabled: !directory },
             { label: 'New project', icon: <FolderOpen size={15} aria-hidden />, onSelect: () => setDialog('project'), disabled: !directory },

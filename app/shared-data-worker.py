@@ -21,13 +21,13 @@ db.execute('PRAGMA trusted_schema=OFF')
 db.execute('PRAGMA temp_store=MEMORY')
 db.execute('PRAGMA foreign_keys=ON')
 db.execute('PRAGMA max_page_count=4096')
-db.execute('CREATE TABLE IF NOT EXISTS briefsip_owners(name TEXT PRIMARY KEY COLLATE NOCASE, owner TEXT NOT NULL)')
+db.execute('CREATE TABLE IF NOT EXISTS minarbot_owners(name TEXT PRIMARY KEY COLLATE NOCASE, owner TEXT NOT NULL)')
 for category, limit in [(sqlite3.SQLITE_LIMIT_LENGTH, 1024 * 1024), (sqlite3.SQLITE_LIMIT_SQL_LENGTH, 32000), (sqlite3.SQLITE_LIMIT_COLUMN, 100), (sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 100), (sqlite3.SQLITE_LIMIT_ATTACHED, 0), (sqlite3.SQLITE_LIMIT_EXPR_DEPTH, 100)]:
     db.setlimit(category, limit)
 deadline = time.monotonic() + 1.5
 db.set_progress_handler(lambda: time.monotonic() > deadline, 1000)
 owner = request.get('owner')
-owners = dict(db.execute('SELECT lower(name),owner FROM briefsip_owners'))
+owners = dict(db.execute('SELECT lower(name),owner FROM minarbot_owners'))
 indexes = dict(db.execute("SELECT lower(name),tbl_name FROM sqlite_schema WHERE type='index'"))
 created = set()
 changed = False
@@ -39,7 +39,7 @@ def permitted(name):
 
 def authorize(action, first, second, database, origin):
     global changed
-    protected = lambda name: name and identifier(name).startswith('briefsip_')
+    protected = lambda name: name and identifier(name).startswith('minarbot_')
     if database == 'temp' and first == 'sqlite_temp_master' and action in (sqlite3.SQLITE_READ, sqlite3.SQLITE_UPDATE):
         return sqlite3.SQLITE_OK
     if database not in (None, 'main') or protected(first):
@@ -80,7 +80,7 @@ def cell(value):
 try:
     mode = request['mode']
     if mode == 'list':
-        tables = db.execute("SELECT m.name,o.owner FROM sqlite_schema m JOIN briefsip_owners o ON o.name=m.name WHERE m.type='table' AND m.name>? ORDER BY m.name LIMIT 21", (request.get('after', ''),)).fetchall()
+        tables = db.execute("SELECT m.name,o.owner FROM sqlite_schema m JOIN minarbot_owners o ON o.name=m.name WHERE m.type='table' AND m.name>? ORDER BY m.name LIMIT 21", (request.get('after', ''),)).fetchall()
         items = []
         for name, creator in tables[:20]:
             item = {'name': name, 'owner': creator, 'columns': [{'name': row[1], 'type': row[2], 'notnull': bool(row[3]), 'primary_key': bool(row[5])} for row in db.execute('PRAGMA table_info("' + name.replace('"', '""') + '")')]}
@@ -91,7 +91,7 @@ try:
             raise ValueError('Table metadata exceeds the result limit.')
         result = {'tables': items, 'next_after': items[-1]['name'] if len(tables) > len(items) else None}
     else:
-        before = {identifier(row[0]): row[0] for row in db.execute("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT GLOB 'sqlite_*' AND name NOT GLOB 'briefsip_*'")}
+        before = {identifier(row[0]): row[0] for row in db.execute("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT GLOB 'sqlite_*' AND name NOT GLOB 'minarbot_*'")}
         db.execute('BEGIN')
         changes_before = db.total_changes
         db.set_authorizer(authorize)
@@ -105,13 +105,13 @@ try:
         if len(json.dumps(result).encode('utf8')) > 128 * 1024:
             raise ValueError('Query result exceeds 128 KiB. Choose fewer columns or a smaller page.')
         tables = [row[0] for row in db.execute("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT GLOB 'sqlite_*'")]
-        if any(name != 'briefsip_owners' and (len(name) > 128 or identifier(name).startswith('briefsip_')) for name in tables):
+        if any(name != 'minarbot_owners' and (len(name) > 128 or identifier(name).startswith('minarbot_')) for name in tables):
             raise ValueError('Table name is protected or exceeds 128 characters.')
-        after = {identifier(name): name for name in tables if name != 'briefsip_owners'}
+        after = {identifier(name): name for name in tables if name != 'minarbot_owners'}
         for removed in before.keys() - after.keys():
-            db.execute('DELETE FROM briefsip_owners WHERE name=?', (before[removed],))
+            db.execute('DELETE FROM minarbot_owners WHERE name=?', (before[removed],))
         for added in after.keys() - before.keys():
-            db.execute('INSERT INTO briefsip_owners VALUES (?,?)', (after[added], owner))
+            db.execute('INSERT INTO minarbot_owners VALUES (?,?)', (after[added], owner))
         db.execute('COMMIT')
     if len(json.dumps(result).encode('utf8')) > 128 * 1024:
         raise ValueError('Query result exceeds 128 KiB. Choose fewer columns or a smaller page.')

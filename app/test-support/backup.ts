@@ -1,3 +1,4 @@
+import { productEnv } from '../../desktop/src/rename-env.mjs';
 import { type DatabaseSync, backup } from 'node:sqlite';
 import { testDatabase } from './database.ts';
 import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
@@ -11,7 +12,7 @@ import { schemaVersion, transaction } from './legacy-schema.ts';
 import { rustBinary } from '../rust-binary.ts';
 
 export function restoreCommand(args: string[], options: { env?: NodeJS.ProcessEnv; input?: string } = {}) {
-  const binary = rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
+  const binary = rustBinary('minarbot-server', productEnv('MINARBOT_RUST_BINARY'));
   const result = spawnSync(binary, ['restore', ...args], { encoding: 'utf8', env: { ...process.env, ...options.env }, input: options.input, timeout: 10000, maxBuffer: 10 * 1024 * 1024 });
   if (result.error) throw result.error;
   const value = JSON.parse(result.stdout || 'null');
@@ -36,7 +37,7 @@ const restoreDenied=()=>new ProtocolError(403,'recovery_session_invalid','Recove
 const restoreSessionDigest=(actor:HumanActor,proof:string)=>digestCommand(['briefsip-restore-session-v1',actor.accountId,actor.issuer,actor.subject,proof]);
 function recoveryOwner(db:DatabaseSync,auth:Pick<HumanAuth,'requireCurrent'>,actor:HumanActor){
   auth.requireCurrent(actor);
-  const recorded=db.prepare('SELECT owner_account FROM briefsip_backup_authority').all();
+  const recorded=db.prepare('SELECT owner_account FROM minarbot_backup_authority').all();
   if(recorded.length!==1||recorded[0].owner_account!==actor.accountId)throw restoreDenied();
   if(!db.prepare("SELECT 1 FROM accounts a JOIN projects p ON p.account=a.id JOIN project_members m ON m.project=p.id AND m.account=a.id WHERE a.id=? AND a.issuer=? AND a.clerk_sub=? AND a.blocked=0 AND p.deleted=0 AND m.deleted=0 AND m.role='owner'").get(actor.accountId,actor.issuer,actor.subject))throw restoreDenied();
   const state=db.prepare("SELECT * FROM authority_state WHERE id=1 AND serving_state='read_only_recovery'").get();
@@ -67,26 +68,26 @@ export function requireRestoreSession(db:DatabaseSync,auth:Pick<HumanAuth,'requi
 }
 
 export async function workspaceSnapshot(db: DatabaseSync, ownerAccountId?:string) {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-backup-')), file = join(directory, 'briefsip.sqlite');
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-backup-')), file = join(directory, 'minarbot.sqlite');
   try {
     await backup(db, file);
     chmodSync(file, 0o600);
     const snapshot = testDatabase(file);
     try {
-      snapshot.exec(`CREATE TABLE IF NOT EXISTS briefsip_backup (format TEXT NOT NULL,version INTEGER NOT NULL,created TEXT NOT NULL) STRICT;
-        DELETE FROM briefsip_backup;`);
-      snapshot.prepare('INSERT INTO briefsip_backup VALUES (?,?,?)').run('briefsip-workspace', 1, new Date().toISOString());
+      snapshot.exec(`CREATE TABLE IF NOT EXISTS minarbot_backup (format TEXT NOT NULL,version INTEGER NOT NULL,created TEXT NOT NULL) STRICT;
+        DELETE FROM minarbot_backup;`);
+      snapshot.prepare('INSERT INTO minarbot_backup VALUES (?,?,?)').run('minarbot-workspace', 1, new Date().toISOString());
       if (schemaVersion(snapshot)) {
         const authority=snapshot.prepare('SELECT generation FROM authority_state WHERE id=1').get();
         if(!authority)throw new Error('Canonical authority is missing');
-        snapshot.prepare("UPDATE briefsip_backup SET format='briefsip-canonical-v6',version=6").run();
-        snapshot.exec('CREATE TABLE IF NOT EXISTS briefsip_backup_authority(generation TEXT NOT NULL,owner_account TEXT REFERENCES accounts(id)) STRICT;');
-        if(!snapshot.prepare('PRAGMA table_info(briefsip_backup_authority)').all().some(row=>row.name==='owner_account'))snapshot.exec('ALTER TABLE briefsip_backup_authority ADD COLUMN owner_account TEXT REFERENCES accounts(id)');
-        const previous=snapshot.prepare('SELECT owner_account FROM briefsip_backup_authority').get(),owners=snapshot.prepare('SELECT DISTINCT account FROM projects').all();
+        snapshot.prepare("UPDATE minarbot_backup SET format='minarbot-canonical-v6',version=6").run();
+        snapshot.exec('CREATE TABLE IF NOT EXISTS minarbot_backup_authority(generation TEXT NOT NULL,owner_account TEXT REFERENCES accounts(id)) STRICT;');
+        if(!snapshot.prepare('PRAGMA table_info(minarbot_backup_authority)').all().some(row=>row.name==='owner_account'))snapshot.exec('ALTER TABLE minarbot_backup_authority ADD COLUMN owner_account TEXT REFERENCES accounts(id)');
+        const previous=snapshot.prepare('SELECT owner_account FROM minarbot_backup_authority').get(),owners=snapshot.prepare('SELECT DISTINCT account FROM projects').all();
         const owner=ownerAccountId??previous?.owner_account??(owners.length===1?owners[0].account:null);
         if(owners.length>0&&(owner===null||!snapshot.prepare('SELECT 1 FROM projects WHERE account=?').get(owner)))throw new Error('Canonical backup requires its recorded owner');
-        snapshot.exec('DELETE FROM briefsip_backup_authority');
-        snapshot.prepare('INSERT INTO briefsip_backup_authority VALUES (?,?)').run(authority.generation,owner);
+        snapshot.exec('DELETE FROM minarbot_backup_authority');
+        snapshot.prepare('INSERT INTO minarbot_backup_authority VALUES (?,?)').run(authority.generation,owner);
       }
     } finally { snapshot.close(); }
     return { file, cleanup: () => rmSync(directory, { recursive: true, force: true }) };

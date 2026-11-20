@@ -4,22 +4,22 @@
   "license": "MIT",
   "notice": "app/src/ui/NOTICE",
   "entries": [
-    { "sourcePath": "web/src/components/config/BotSettingsModal.tsx", "localPath": "app/src/App.tsx", "adaptation": "Routine list hierarchy, enabled switch, run-now and delete affordances adapted into the Routines hub using Briefsip APIs, revision recovery and owner visibility rules." },
-    { "sourcePath": "web/src/components/Sidebar.tsx", "localPath": "app/src/App.tsx", "adaptation": "Bot HQ header actions, search, agent rows and compact footer composed with the Briefsip Radix kit; Owner-selected Agents / Projects tabs separate machine-grouped direct chats from local projects and sections. Routines and Workflows remain header actions; original Briefsip avatars and request paths retained." },
-    { "sourcePath": "web/src/styles/tokens.css", "localPath": "app/src/ui/tokens.css", "adaptation": "Briefsip brand colors replace per-bot pink; data-theme dark/light/system selectors; legacy panel variables mapped onto tokens." },
-    { "sourcePath": "web/src/styles/base.css", "localPath": "app/src/ui/base.css", "adaptation": "Focus ring uses Briefsip token." },
-    { "sourcePath": "web/src/styles/shell.css", "localPath": "app/src/ui/shell.css", "adaptation": "Bot HQ 60px header, rows and footer adapted for the Owner-selected Agents / Projects sidebar tabs, 44px agent rows, compact header controls and styled scrollbar. Briefsip additions live in app/src/ui/briefsip.css." },
+    { "sourcePath": "web/src/components/config/BotSettingsModal.tsx", "localPath": "app/src/App.tsx", "adaptation": "Routine list hierarchy, enabled switch, run-now and delete affordances adapted into the Routines hub using Minarbot APIs, revision recovery and owner visibility rules." },
+    { "sourcePath": "web/src/components/Sidebar.tsx", "localPath": "app/src/App.tsx", "adaptation": "Bot HQ header actions, search, agent rows and compact footer composed with the Minarbot Radix kit; Owner-selected Agents / Projects tabs separate machine-grouped direct chats from local projects and sections. Routines and Workflows remain header actions; original Minarbot avatars and request paths retained." },
+    { "sourcePath": "web/src/styles/tokens.css", "localPath": "app/src/ui/tokens.css", "adaptation": "Minarbot brand colors replace per-bot pink; data-theme dark/light/system selectors; legacy panel variables mapped onto tokens." },
+    { "sourcePath": "web/src/styles/base.css", "localPath": "app/src/ui/base.css", "adaptation": "Focus ring uses Minarbot token." },
+    { "sourcePath": "web/src/styles/shell.css", "localPath": "app/src/ui/shell.css", "adaptation": "Bot HQ 60px header, rows and footer adapted for the Owner-selected Agents / Projects sidebar tabs, 44px agent rows, compact header controls and styled scrollbar. Minarbot additions live in app/src/ui/minarbot.css." },
     { "sourcePath": "web/src/styles/chat.css", "localPath": "app/src/ui/chat.css", "adaptation": "Notice class renamed to chat-notice; system-theme dark variant; dead bubble/group/sender-label rules removed for Owner-selected message rows." },
-    { "sourcePath": "web/src/styles/details.css", "localPath": "app/src/ui/details.css", "adaptation": "Briefsip focus token; compact identity and Computer row, Radix tab pills, channel member avatars and inline read action. Existing resizable right edge retained." },
-    { "sourcePath": "web/src/styles/modals.css", "localPath": "app/src/ui/modals.css", "adaptation": "Focus ring uses Briefsip token." },
+    { "sourcePath": "web/src/styles/details.css", "localPath": "app/src/ui/details.css", "adaptation": "Minarbot focus token; compact identity and Computer row, Radix tab pills, channel member avatars and inline read action. Existing resizable right edge retained." },
+    { "sourcePath": "web/src/styles/modals.css", "localPath": "app/src/ui/modals.css", "adaptation": "Focus ring uses Minarbot token." },
     { "sourcePath": "web/src/styles/config.css", "localPath": "app/src/ui/config.css", "adaptation": "Palette picker replaces unused tiles; component colors use semantic tokens." },
     { "sourcePath": "web/src/components/Menu.tsx", "localPath": "app/src/ui/Menu.tsx", "adaptation": "Disabled items, labelled menu, focus first item." },
     { "sourcePath": "web/src/components/modals/Modal.tsx", "localPath": "app/src/ui/Modal.tsx", "adaptation": "Built-in header/close button with Lucide icon; stable close callback." },
-    { "sourcePath": "web/src/components/DetailsPanel.tsx", "localPath": "app/src/App.tsx", "adaptation": "Identity, compact Computer hero, three-tab structure and Upcoming routines with Manage adapted to Briefsip Chats / Activity / Library using the existing Radix kit; channel identity, member avatars and inline read status. Briefsip request paths, command recovery and resizable panel retained." },
-    { "sourcePath": "web/src/components/ComputerViewer.tsx", "localPath": "app/src/ComputerViewer.tsx", "adaptation": "noVNC RFB lifecycle, watch viewOnly and scaleViewport pattern. Briefsip keeps Radix Dialog, persistent C1 control/waits and same-origin single-use ticket routing; original clipboard field and keyboard escape." },
-    { "sourcePath": "web/src/components/MembersCard.tsx", "localPath": "app/src/RightPanel.tsx", "adaptation": "Member rows with Briefsip avatars, names and role labels replace section avatar strip; membership and lead identity retained." },
+    { "sourcePath": "web/src/components/DetailsPanel.tsx", "localPath": "app/src/App.tsx", "adaptation": "Identity, compact Computer hero, three-tab structure and Upcoming routines with Manage adapted to Minarbot Chats / Activity / Library using the existing Radix kit; channel identity, member avatars and inline read status. Minarbot request paths, command recovery and resizable panel retained." },
+    { "sourcePath": "web/src/components/ComputerViewer.tsx", "localPath": "app/src/ComputerViewer.tsx", "adaptation": "noVNC RFB lifecycle, watch viewOnly and scaleViewport pattern. Minarbot keeps Radix Dialog, persistent C1 control/waits and same-origin single-use ticket routing; original clipboard field and keyboard escape." },
+    { "sourcePath": "web/src/components/MembersCard.tsx", "localPath": "app/src/RightPanel.tsx", "adaptation": "Member rows with Minarbot avatars, names and role labels replace section avatar strip; membership and lead identity retained." },
     { "sourcePath": "web/src/components/DetailsPanel.tsx", "localPath": "app/src/RightPanelActivity.tsx", "adaptation": "Activity contains room members beside existing upcoming routines and operational queue/wait controls; remove transcript run summaries." },
-    { "sourcePath": "web/src/components/DetailsPanel.tsx", "localPath": "app/src/Projects.tsx", "adaptation": "Adapt section-label row pattern for trailing Members, Folders, Sections and Conversations actions using Briefsip Section and Radix controls." }
+    { "sourcePath": "web/src/components/DetailsPanel.tsx", "localPath": "app/src/Projects.tsx", "adaptation": "Adapt section-label row pattern for trailing Members, Folders, Sections and Conversations actions using Minarbot Section and Radix controls." }
   ],
   "notUsed": "Bot HQ icon SVGs, avatar shapes and Grok Bot-derived visuals are not copied; icons come from lucide-react (ISC).",
   "additionalSources": [
@@ -32,7 +32,7 @@
         {
           "sourcePath": "apps/shared/src/theme-presets.ts",
           "localPath": "app/src/ui/themes.ts",
-          "adaptation": "Five preset pairs mapped to Briefsip semantic roles. Midnight ships only dark upstream; light is an original purple-neutral derivation. Weak muted text, borders and destructive values are adjusted; source action/accent values remain intact. Midnight uses its source ring as its accent."
+          "adaptation": "Five preset pairs mapped to Minarbot semantic roles. Midnight ships only dark upstream; light is an original purple-neutral derivation. Weak muted text, borders and destructive values are adjusted; source action/accent values remain intact. Midnight uses its source ring as its accent."
         },
         {
           "sourcePath": "apps/shared/src/color.ts",
@@ -50,12 +50,12 @@
         {
           "sourcePath": "apps/web/src/hooks/useTheme.ts",
           "localPath": "app/src/presentation.ts; app/src/ui/themes.ts",
-          "adaptation": "Independent palette and appearance preferences, guarded browser storage, native system appearance and CSS application. Existing Briefsip version-1 preferences migrate to the Briefsip palette without overwriting storage."
+          "adaptation": "Independent palette and appearance preferences, guarded browser storage, native system appearance and CSS application. Existing Minarbot version-1 preferences migrate to the Minarbot palette without overwriting storage."
         },
         {
           "sourcePath": "apps/web/src/themePalette.ts; apps/web/src/vscodeThemeImport.ts",
           "localPath": "app/src/ui/themes.ts",
-          "adaptation": "Semantic role projection and minimum contrast across role surfaces adapted to Briefsip's existing tokens. Uses Hermes sRGB mixing rather than copying T3's OKLCH solver or importing VS Code theme files."
+          "adaptation": "Semantic role projection and minimum contrast across role surfaces adapted to Minarbot's existing tokens. Uses Hermes sRGB mixing rather than copying T3's OKLCH solver or importing VS Code theme files."
         }
       ]
     }

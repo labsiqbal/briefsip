@@ -5,7 +5,7 @@ import { parseArgs } from 'node:util';
 
 export async function checkServed(origin, { present = [], absent = [], expectVersion } = {}) {
   const url = new URL(origin);
-  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw new Error('Expected an HTTP(S) origin, e.g. https://briefsip.example.');
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw new Error('Expected an HTTP(S) origin, e.g. https://minarbot.example.');
   if ([present, absent].some(markers => !Array.isArray(markers) || markers.some(text => typeof text !== 'string' || !text.length)) || expectVersion !== undefined && (typeof expectVersion !== 'string' || !expectVersion.length)) throw new Error('Markers and expected version must be non-empty text.');
   const files = [], report = [];
   async function get(target, type) {

@@ -1,3 +1,4 @@
+import { readProductStorage } from './rename-storage.ts';
 // Panel tabs and surface composition adapted from T3 (MIT); see ../t3/provenance.json.
 import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
@@ -24,7 +25,7 @@ type Context = { workspace: { name: string; project?: string } | null; computer:
 export type RightPanelExtension = { value: string; label: ReactNode; content: ReactNode };
 
 export function useRightPanel(scope: string) {
-  const store = useMemo(() => createRightPanelStore({ getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value) }), []);
+  const store = useMemo(() => createRightPanelStore({ getItem: key => readProductStorage(localStorage, key), setItem: (key, value) => localStorage.setItem(key, value) }), []);
   const [selection, setSelection] = useState<{ scope: string; tab: string; file: OpenFile | null }>(() => ({ scope, tab: store.read(scope).tab, file: null }));
   if (selection.scope !== scope) setSelection({ scope, tab: store.read(scope).tab, file: null });
   const [inspector, setInspector] = useState<{ scope: string; target: RunTarget } | null>(null);
@@ -93,7 +94,7 @@ export function RightPanel({ path, name, state, request, onClose, details, activ
       {error && <div className="right-panel__error"><Alert tone="error" actions={<Button size="sm" onClick={() => setRefresh(value => value + 1)}>Retry</Button>}>{error}</Alert></div>}
       <TabPanel value="chats">{members ? <div className="right-panel__body"><ul className="right-panel__members" aria-label="Section members">{members.map(member => <li key={member.id}><AgentAvatar agent={member} size={32} /><div><strong>{member.name}</strong><span>{[member.lead ? 'Lead' : 'Member', member.role].filter(Boolean).join(' · ')}</span></div></li>)}</ul></div> : details}{activity}</TabPanel>
       <TabPanel value="files">
-        {state.tab === 'diff' && git?.isRepo ? <><div className="right-panel__back"><IconButton label="Back to files" onClick={() => state.select('files')}><ArrowLeft size={15} aria-hidden /></IconButton><span>Source control</span></div><PanelDiff base={base} status={git} request={request} refresh={refresh} /></> : state.tab === 'preview' && state.result?.view === 'url' ? <ResultURLPreview key={state.result.path} target={state.result} computer={computerAvailable ? resultComputer ?? context?.computer ?? undefined : undefined} name={name} request={request} onBack={() => state.select('files')} /> : state.tab === 'preview' ? <PanelPreview onBack={() => state.select('files')} base={base} files={context?.previews ?? []} sites={context?.sites ?? []} request={request} /> : <PanelFiles selected={state.file} onSelect={state.selectFile} onDeleted={() => { setRefresh(value => value + 1); window.dispatchEvent(new Event('briefsip:message-changed')); }} navigation={<>
+        {state.tab === 'diff' && git?.isRepo ? <><div className="right-panel__back"><IconButton label="Back to files" onClick={() => state.select('files')}><ArrowLeft size={15} aria-hidden /></IconButton><span>Source control</span></div><PanelDiff base={base} status={git} request={request} refresh={refresh} /></> : state.tab === 'preview' && state.result?.view === 'url' ? <ResultURLPreview key={state.result.path} target={state.result} computer={computerAvailable ? resultComputer ?? context?.computer ?? undefined : undefined} name={name} request={request} onBack={() => state.select('files')} /> : state.tab === 'preview' ? <PanelPreview onBack={() => state.select('files')} base={base} files={context?.previews ?? []} sites={context?.sites ?? []} request={request} /> : <PanelFiles selected={state.file} onSelect={state.selectFile} onDeleted={() => { setRefresh(value => value + 1); window.dispatchEvent(new Event('minarbot:message-changed')); }} navigation={<>
           {(git?.isRepo || !!context?.previews.length || !!context?.sites.length) && <div className="k-stack">
             {git?.isRepo && <Button className="right-panel__nav-row" variant="ghost" icon={<FileDiff size={14} aria-hidden />} onClick={() => state.select('diff')}>Source control <Badge>{git.changedFiles?.length ?? 0} changed</Badge></Button>}
             {(!!context?.previews.length || !!context?.sites.length) && <Button className="right-panel__nav-row" variant="ghost" icon={<Globe size={14} aria-hidden />} onClick={() => state.select('preview')}>Preview artifacts</Button>}

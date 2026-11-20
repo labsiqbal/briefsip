@@ -10,7 +10,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { startApp } from './test-bridge.ts';
 import { mcpScopes, defaultSessionScopes, type McpScope } from './t3/mcp-session-registry.ts';
 async function fixture() {
- const dir=mkdtempSync(join(tmpdir(),'briefsip-m4-')),database=join(dir,'state.sqlite'),clients:Client[]=[];
+ const dir=mkdtempSync(join(tmpdir(),'minarbot-m4-')),database=join(dir,'state.sqlite'),clients:Client[]=[];
  const held: (()=>void)[]=[]; const provider=createServer(async(req,res)=>{let raw='';for await(const chunk of req)raw+=chunk;
  if(req.url?.startsWith('/connected_accounts')){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({items:[{id:'account_fixture',status:'ACTIVE',toolkit:{slug:'gmail'},connection_data:{token:'COMPOSIO_KEY_CANARY'},secret:'COMPOSIO_KEY_CANARY'}]}));return;}
  if(req.url==='/mcp'){const data=raw?JSON.parse(raw):{};if(data.id===undefined){res.writeHead(202);res.end();return;}const result=data.method==='initialize'?{protocolVersion:'2025-03-26',capabilities:{tools:{}},serverInfo:{name:'fixture',version:'1'}}:data.method==='tools/list'?{tools:[]}:{};res.setHeader('Content-Type','application/json');res.end(JSON.stringify({jsonrpc:'2.0',id:data.id,result}));return;}

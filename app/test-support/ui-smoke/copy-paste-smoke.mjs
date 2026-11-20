@@ -8,7 +8,7 @@ import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { startApp } from '../../test-bridge.ts';
 
-const scratch = await mkdtemp(join(tmpdir(), 'briefsip-cp1-'));
+const scratch = await mkdtemp(join(tmpdir(), 'minarbot-cp1-'));
 const baseline = process.env.CP1_BASELINE === '1';
 const receipt = { baseline, checks: [], errors: [] };
 const output = resolve('app/test-support/ui-smoke/artifacts/copy-paste'); await mkdir(output, { recursive: true });
@@ -117,9 +117,9 @@ try {
     await page.getByRole('alert').filter({ hasText: 'Up to four attachments per message.' }).waitFor();
     assert.equal(await input.inputValue(), 'Keep draft');
   });
-  desktop = await electron.launch({ executablePath: resolve('desktop/node_modules/electron/dist/electron'), args: [resolve('desktop'), `--user-data-dir=${join(scratch, 'electron')}`], env: { ...process.env, BRIEFSIP_SERVER_URL: app.origin } });
+  desktop = await electron.launch({ executablePath: resolve('desktop/node_modules/electron/dist/electron'), args: [resolve('desktop'), `--user-data-dir=${join(scratch, 'electron')}`], env: { ...process.env, MINARBOT_SERVER_URL: app.origin } });
   const desktopPage = await desktop.firstWindow(); await desktopPage.waitForURL(app.origin + '/'); await open(desktopPage);
-  assert.deepEqual(await desktopPage.evaluate(() => Object.keys(window.briefsipDesktop).sort()), ['appVersion', 'checkForUpdates', 'openExternal']);
+  assert.deepEqual(await desktopPage.evaluate(() => Object.keys(window.minarbotDesktop).sort()), ['appVersion', 'checkForUpdates', 'openExternal']);
   await check('desktop clipboard API write/read', async () => {
     await desktopPage.bringToFront();
     assert.equal(await desktopPage.evaluate(async () => { try { await navigator.clipboard.writeText('desktop fixture'); return await navigator.clipboard.readText(); } catch (e) { return e.name + ': ' + e.message; } }), 'desktop fixture');

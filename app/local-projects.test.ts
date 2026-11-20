@@ -18,7 +18,7 @@ test('Rust project folders reject system, traversal, home, credential, data and 
     symlinkSync('/etc', escape);
     symlinkSync(safe, alias);
     const home = homedir(), data = dirname(f.options.database);
-    for (const path of ['/', '/etc', '/tmp', home, ...['.ssh', '.codex', '.codex-linc', '.claude', '.hermes', '.config/briefsip'].map(name => join(home, name)), data, join(data, 'sub'), escape, alias, safe + '/../safe']) {
+    for (const path of ['/', '/etc', '/tmp', home, ...['.ssh', '.codex', '.codex-linc', '.claude', '.hermes', '.config/minarbot'].map(name => join(home, name)), data, join(data, 'sub'), escape, alias, safe + '/../safe']) {
       await f.request('/api/projects', { id: randomUUID(), name: 'Bad', folders: [{ mode: 'existing', path }] }, 400);
     }
     await f.restart({ projectRoot: escape });

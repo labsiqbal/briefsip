@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { startApp } from './test-bridge.ts';
 
 test('webhook receipts isolate, deduplicate, rotate and persist ignored events', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-webhooks-')), prompts: string[] = [];
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-webhooks-')), prompts: string[] = [];
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     const prompt = JSON.parse(raw).messages.at(-1).content; prompts.push(prompt);

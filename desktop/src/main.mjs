@@ -1,9 +1,10 @@
+import { productEnv } from './rename-env.mjs';
 // Adapted from T3 apps/desktop. Source files and changes: ../provenance.json.
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { app, BrowserWindow, Menu, dialog, ipcMain, shell, session, screen } from 'electron';
 import electronUpdater from 'electron-updater';
-import { addServer, readSettings, removeServer, resolveWindowBounds, writeSettings } from './settings.mjs';
+import { addServer, legacyUserData, readSettings, removeServer, resolveWindowBounds, writeSettings } from './settings.mjs';
 import { canGrantPermission, canNotify, isAllowedExternal, isAllowedNavigation, parseServerUrl, trustedSender, validateServer } from './policy.mjs';
 import { installContextMenu } from './context-menu.mjs';
 import { configureUpdates } from './updates.mjs';
@@ -18,7 +19,7 @@ let updates;
 let configuredUrl = null;
 let connectionGeneration = 0;
 function persist(value) { writeSettings(app.getPath('userData'), value); settings = value; }
-function report(message) { dialog.showErrorBox('Briefsip', message); }
+function report(message) { dialog.showErrorBox('Minarbot', message); }
 function showConnect(errorMessage = '') {
   connectionGeneration++;
   configuredUrl = null;
@@ -50,7 +51,7 @@ function saveWindowState() {
 function buildMenu() {
   const servers = settings.servers.map((url) => ({ label: url, type: 'radio', checked: url === settings.activeServer, click: () => { void connect(url); } }));
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: 'Briefsip', submenu: [{ label: 'About Briefsip', role: 'about' }, { label: 'Check for Updates...', click: () => { void updates.check(true); } }, { type: 'separator' }, { role: 'quit' }] },
+    { label: 'Minarbot', submenu: [{ label: 'About Minarbot', role: 'about' }, { label: 'Check for Updates...', click: () => { void updates.check(true); } }, { type: 'separator' }, { role: 'quit' }] },
     { label: 'Servers', submenu: [{ label: 'Connect to Server...', click: () => showConnect() }, ...servers,
       { label: 'Remove Server', enabled: servers.length > 0, submenu: settings.servers.map((url) => ({ label: url, click: async () => {
         const { response } = await dialog.showMessageBox(mainWindow, { message: 'Remove this saved server?', detail: url, buttons: ['Remove', 'Cancel'], defaultId: 1, cancelId: 1 });
@@ -72,7 +73,7 @@ function configurePermissions() {
 }
 function createWindow() {
   mainWindow = new BrowserWindow({ ...resolveWindowBounds(settings.window, screen.getAllDisplays().map((display) => display.workArea)),
-    minWidth: 640, minHeight: 480, show: false, title: 'Briefsip', backgroundColor: '#111113', icon: path.join(root, 'assets/icon.png'),
+    minWidth: 640, minHeight: 480, show: false, title: 'Minarbot', backgroundColor: '#111113', icon: path.join(root, 'assets/icon.png'),
     webPreferences: { preload: path.join(root, 'src/preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, devTools: isDev },
   });
   mainWindow.once('ready-to-show', () => mainWindow.show());
@@ -83,9 +84,9 @@ function createWindow() {
   contents.setWindowOpenHandler(({ url }) => { openLink(url); return { action: 'deny' }; });
   contents.on('will-attach-webview', (event) => event.preventDefault());
   contents.on('will-frame-navigate', (event) => {
-    if (event.isMainFrame && event.url.startsWith('briefsip-connect:') && (contents.getURL() === connectUrl || contents.getURL().startsWith(`${connectUrl}?`))) {
+    if (event.isMainFrame && event.url.startsWith('minarbot-connect:') && (contents.getURL() === connectUrl || contents.getURL().startsWith(`${connectUrl}?`))) {
       event.preventDefault();
-      try { void connect(decodeURIComponent(event.url.slice('briefsip-connect:'.length))); } catch { showConnect('Enter a valid server URL.'); }
+      try { void connect(decodeURIComponent(event.url.slice('minarbot-connect:'.length))); } catch { showConnect('Enter a valid server URL.'); }
       return;
     }
     if (isAllowedNavigation(event.url, configuredUrl)) return;
@@ -110,13 +111,17 @@ function registerIpc() {
   handle('check-for-updates', () => updates.check(true));
   handle('open-external', openExternal);
 }
+const userData = app.getPath('userData');
+const previousData = legacyUserData(userData);
+if (previousData !== userData) app.setPath('userData', previousData);
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => { if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show(); mainWindow.focus(); } });
   app.whenReady().then(() => {
     settings = readSettings(app.getPath('userData'));
     // Dev URL is explicit and validated; packaged builds use saved servers only.
-    if (isDev && process.env.BRIEFSIP_SERVER_URL) settings = addServer(settings, parseServerUrl(process.env.BRIEFSIP_SERVER_URL).href);
+    const devServer = isDev && productEnv('MINARBOT_SERVER_URL');
+    if (devServer) settings = addServer(settings, parseServerUrl(devServer).href);
     updates = configureUpdates({ updater: electronUpdater.autoUpdater, enabled: app.isPackaged && Boolean(process.env.APPIMAGE), prompt: async (options) => (await dialog.showMessageBox(options)).response });
     configurePermissions(); registerIpc(); createWindow(); buildMenu();
     app.on('activate', () => { if (!mainWindow) createWindow(); });

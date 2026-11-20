@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { startApp } from './test-bridge.ts';
 
 test('HTTP: persistence, idempotent FIFO turns, isolation, failure and interrupted recovery', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-check-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-check-'));
   const calls: string[] = [];
   const profilesSeen: { text: string; model: string; instructions: string }[] = [];
   let releaseRouting: (() => void) | undefined;
@@ -315,7 +315,7 @@ test('HTTP: persistence, idempotent FIFO turns, isolation, failure and interrupt
 });
 
 test('automatic routing shares four workers with execution', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-concurrency-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-concurrency-'));
   let active = 0, peak = 0, released = false;
   const waiting: (() => void)[] = [];
   const provider = createServer(async (req, res) => {
@@ -375,7 +375,7 @@ test('automatic routing shares four workers with execution', async () => {
 
 
 test('legacy agent migration preserves create retries across later edits', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-legacy-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-legacy-'));
   const database = join(dir, 'state.sqlite');
   const original = { id: randomUUID(), name: 'Legacy', model: 'fixture', instructions: 'Original instructions.' };
   const db = testDatabase(database);
@@ -416,7 +416,7 @@ test('legacy agent migration preserves create retries across later edits', async
 });
 
 test('channel read positions are durable, monotone and bound to observed activity', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-reads-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-reads-'));
   let releaseReply: (() => void) | undefined;
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;

@@ -10,7 +10,7 @@ import {pdfFixture} from './test-support/pdf-fixture.ts';
 import {setTimeout as delay} from 'node:timers/promises';
 
 for(const pdf of [false,true]) test(`requester reads returned teammate ${pdf?'PDF':'text'} artifacts but not private inputs or no-reply outputs`,async()=>{
- const dir=mkdtempSync(join(tmpdir(),'briefsip-result-read-'));let worker='',created='',otherOutput='',target='',expectsReply=true,restart=false,hold=false,ready=false,release:(()=>void)|undefined;
+ const dir=mkdtempSync(join(tmpdir(),'minarbot-result-read-'));let worker='',created='',otherOutput='',target='',expectsReply=true,restart=false,hold=false,ready=false,release:(()=>void)|undefined;
  const results:any[]=[],returned:any[]=[];let creates=0,openReturned=false;
  const provider=createServer(async(req,res)=>{
   let raw='';for await(const chunk of req)raw+=chunk;const body=JSON.parse(raw),tools=body.messages.filter((m:any)=>m.role==='tool'),last=tools.length?JSON.parse(tools.at(-1).content):null;let fn:any,answer='Done';

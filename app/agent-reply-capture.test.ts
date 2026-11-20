@@ -9,7 +9,7 @@ import { startApp } from './test-bridge.ts';
 import { testDatabase } from './test-support/database.ts';
 
 test('new user turns capture only ready same-scope group replies once across retries and restart', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-reply-capture-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-reply-capture-'));
   const calls: any[] = [], release: (() => void)[] = [];
   let targets: string[] = [], holdGamma = true, failConsumer = true;
   const provider = createServer({ keepAliveTimeout: 0 }, async (req, res) => {

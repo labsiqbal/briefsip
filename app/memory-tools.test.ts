@@ -9,7 +9,7 @@ import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 
 test('agent memory writes preserve scope, user selection, atomic errors and resume receipts', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-memory-tools-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-memory-tools-'));
   let args: unknown = { text: 'First memory' }, hold = false, held = false, lastResult: any;
   let beforeWrite: (() => Promise<unknown>) | undefined;
   const provider = createServer(async (req, res) => {
@@ -92,7 +92,7 @@ test('agent memory writes preserve scope, user selection, atomic errors and resu
 });
 
 test('memory and artifact order survives repeated delegation when parent continues', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-memory-delegation-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-memory-delegation-'));
   let peer = '', observed: string[] = [];
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;

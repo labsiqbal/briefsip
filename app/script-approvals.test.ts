@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 
 test('script approval binds agent and revision, preserves receipts and refuses revoked or deleted streamed retries', async () => {
-  const dir=mkdtempSync(join(tmpdir(),'briefsip-script-approval-')), token=randomBytes(32).toString('base64url');
+  const dir=mkdtempSync(join(tmpdir(),'minarbot-script-approval-')), token=randomBytes(32).toString('base64url');
   const options={database:join(dir,'db.sqlite'),scriptToken:token};let app=await startApp(options);
   const auth={Authorization:`Bearer ${token}`,'Content-Type':'application/json'};
   async function request(path:string,body?:unknown,status?:number,headers?:Record<string,string>):Promise<any>{

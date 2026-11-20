@@ -10,8 +10,8 @@ import { pathToFileURL } from 'node:url';
 export async function measureRust(binary, budgets) {
   const budget = budgets.rust;
   for (const key of ['idleRssMiB', 'p95LatencyMs', 'warmupRequests', 'measuredRequests']) if (!Number.isFinite(budget?.[key]) || budget[key] <= 0) throw new Error(`Invalid Rust budget: ${key}`);
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-rust-budget-'));
-  const child = spawn(resolve(binary), ['--test-config'], { env: { ...process.env, BRIEFSIP_TEST_SERVER: 'rust' }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-rust-budget-'));
+  const child = spawn(resolve(binary), ['--test-config'], { env: { ...process.env, MINARBOT_TEST_SERVER: 'rust' }, stdio: ['pipe', 'pipe', 'pipe'] });
   const closed = new Promise(ready => child.once('close', () => ready()));
   let error = '', output = '';
   child.stderr.setEncoding('utf8'); child.stderr.on('data', value => { error = (error + value).slice(-4096); });
@@ -22,7 +22,7 @@ export async function measureRust(binary, budgets) {
       const timeout = setTimeout(() => reject(new Error('Rust resource gate readiness timed out')), 10000);
       child.once('error', failure => { clearTimeout(timeout); reject(failure); });
       void closed.then(() => { clearTimeout(timeout); reject(new Error(`Rust resource gate exited: ${error}`)); });
-      child.stdout.on('data', value => { output += value; const match = /^Briefsip: (http:\/\/[^\r\n]+)$/m.exec(output); if (match) { clearTimeout(timeout); ready(match[1]); } });
+      child.stdout.on('data', value => { output += value; const match = /^Minarbot: (http:\/\/[^\r\n]+)$/m.exec(output); if (match) { clearTimeout(timeout); ready(match[1]); } });
     });
     const request = async () => { const response = await fetch(origin + '/api/agents', { signal: AbortSignal.timeout(5000) }); if (response.status !== 200) throw new Error(`Rust workload returned ${response.status}`); const value = await response.json(); if (!Array.isArray(value.agents)) throw new Error('Rust workload returned an invalid body'); };
     for (let index = 0; index < budget.warmupRequests; index++) await request();
@@ -44,7 +44,7 @@ export async function measureRust(binary, budgets) {
 export async function measureRustLauncher(binary, server, budgets) {
   const budget = budgets.rustLauncher;
   if (!Number.isFinite(budget?.idleRssMiB) || budget.idleRssMiB <= 0) throw new Error('Invalid Rust launcher budget: idleRssMiB');
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-launcher-budget-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-launcher-budget-'));
   const releases = join(directory, 'releases'), id = '1.0.0-00000000', release = join(releases, id);
   let child, closed;
   try {
@@ -54,7 +54,7 @@ export async function measureRustLauncher(binary, server, budgets) {
     await new Promise(ready => socket.close(ready));
     mkdirSync(release, { recursive: true });
     mkdirSync(join(release, 'bin'));
-    cpSync(resolve(server), join(release, 'bin/briefsip-server'));
+    cpSync(resolve(server), join(release, 'bin/minarbot-server'));
     writeFileSync(join(release, 'package.json'), JSON.stringify({ version: '1.0.0', type: 'module' }));
     writeFileSync(join(release, 'release.json'), JSON.stringify({ id, version: '1.0.0', files: fileManifest(release) }));
     symlinkSync(id, join(releases, 'current'));

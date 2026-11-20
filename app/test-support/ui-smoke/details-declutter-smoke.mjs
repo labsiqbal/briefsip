@@ -14,19 +14,19 @@ export async function detailsDeclutterSmoke({ page, check, origin, screenshot, g
   await check('LB1 single panel tab row across themes and widths', async () => {
     for (const viewport of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }]) {
       await page.setViewportSize(viewport);
-      for (const size of ['default', 'compact']) for (const palette of ['briefsip', 'github', 'catppuccin', 'everforest', 'solarized', 'midnight']) for (const theme of ['dark', 'light']) {
+      for (const size of ['default', 'compact']) for (const palette of ['minarbot', 'github', 'catppuccin', 'everforest', 'solarized', 'midnight']) for (const theme of ['dark', 'light']) {
         await page.evaluate(values => Object.assign(document.documentElement.dataset, values), { textSize: size, colorTheme: palette, theme });
         for (const tab of ['Chats', 'Files', 'Diff']) {
           await details.getByRole('tab', { name: tab === 'Diff' ? 'Files' : tab, exact: true }).click();
           if (tab === 'Diff') await details.getByRole('button', { name: /^Source control/ }).click();
           assert.equal(await details.getByRole('tablist').count(), 1);
           assert(await details.evaluate(el => el.scrollWidth <= el.clientWidth + 1));
-          if (palette === 'briefsip' || palette === 'catppuccin' && theme === 'dark') await screenshot(`lb1-after-${tab.toLowerCase()}-${palette}-${theme}-${size}-${viewport.width}`);
+          if (palette === 'minarbot' || palette === 'catppuccin' && theme === 'dark') await screenshot(`lb1-after-${tab.toLowerCase()}-${palette}-${theme}-${size}-${viewport.width}`);
         }
       }
     }
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.evaluate(() => Object.assign(document.documentElement.dataset, { textSize: 'default', colorTheme: 'briefsip', theme: 'dark' }));
+    await page.evaluate(() => Object.assign(document.documentElement.dataset, { textSize: 'default', colorTheme: 'minarbot', theme: 'dark' }));
   });
   if (!baseline) {
     await check('LB1 profile resources, live summary and return focus', async () => {
@@ -103,7 +103,7 @@ export async function detailsDeclutterSmoke({ page, check, origin, screenshot, g
         for (const label of ['Waiting 1']) { const row = details.getByRole('button', { name: label, exact: true }); if (await row.getAttribute('aria-expanded') === 'true') await row.click(); }
         for (const viewport of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }]) {
           await page.setViewportSize(viewport);
-          for (const size of ['default', 'compact']) for (const [palette, theme] of [['briefsip', 'dark'], ['briefsip', 'light'], ['catppuccin', 'dark']]) {
+          for (const size of ['default', 'compact']) for (const [palette, theme] of [['minarbot', 'dark'], ['minarbot', 'light'], ['catppuccin', 'dark']]) {
             await page.evaluate(({ size, palette, theme }) => Object.assign(document.documentElement.dataset, { textSize: size, colorTheme: palette, theme }), { size, palette, theme });
             await details.getByRole('tabpanel', { name: 'Chats', exact: true }).evaluate(el => { el.scrollTop = 0; });
             assert(await details.getByRole('tabpanel', { name: 'Chats', exact: true }).evaluate(el => el.scrollWidth <= el.clientWidth + 1));
@@ -111,7 +111,7 @@ export async function detailsDeclutterSmoke({ page, check, origin, screenshot, g
           }
         }
         await page.setViewportSize({ width: 1440, height: 900 });
-        await page.evaluate(() => Object.assign(document.documentElement.dataset, { textSize: 'default', colorTheme: 'briefsip', theme: 'dark' }));
+        await page.evaluate(() => Object.assign(document.documentElement.dataset, { textSize: 'default', colorTheme: 'minarbot', theme: 'dark' }));
         await details.getByRole('button', { name: /^Upcoming / }).click(); await details.getByText('Next review', { exact: true }).waitFor();
         await details.getByRole('button', { name: 'Manage', exact: true }).click(); await page.getByRole('heading', { name: 'Routines', exact: true }).waitFor();
       } finally { for (const pattern of routes) await page.unroute(pattern); await page.reload(); }

@@ -1,3 +1,4 @@
+import { productEnv } from '../../desktop/src/rename-env.mjs';
 import { createPrivateKey } from 'node:crypto';
 import { hubAssets, hubDocument, createHubWebApi } from './web.ts';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -16,9 +17,9 @@ import { attachNodeLink, type NodeLinkDeps } from './node-link.ts';
 export type NodeUpgradeHandler = (request: IncomingMessage, socket: Duplex, head: Buffer,
   context: Readonly<{ host: string; authority: HubAuthority; routing: HubRouting }>) => void | Promise<void>;
 
-const callbackScript = `const data=new URLSearchParams(location.hash.slice(1));history.replaceState(null,'','/auth/callback');const state=data.get('state'),code=data.get('code');fetch('/auth/redeem',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':state||''},body:JSON.stringify({state,code})}).then(async r=>{if(!r.ok)throw Error();await r.json();const target=sessionStorage.getItem('briefsip:hub-return');sessionStorage.removeItem('briefsip:hub-return');location.replace(target==='/invite'?'/invite':'/');}).catch(()=>{document.body.textContent='Sign-in expired. Return to the project and sign in again.';});`;
+const callbackScript = `const data=new URLSearchParams(location.hash.slice(1));history.replaceState(null,'','/auth/callback');const state=data.get('state'),code=data.get('code');fetch('/auth/redeem',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':state||''},body:JSON.stringify({state,code})}).then(async r=>{if(!r.ok)throw Error();await r.json();const target=sessionStorage.getItem('minarbot:hub-return')??sessionStorage.getItem('briefsip:hub-return');sessionStorage.removeItem('briefsip:hub-return');sessionStorage.removeItem('minarbot:hub-return');location.replace(target==='/invite'?'/invite':'/');}).catch(()=>{document.body.textContent='Sign-in expired. Return to the project and sign in again.';});`;
 const callbackCsp = `default-src 'none'; script-src 'sha256-${Buffer.from(sha256(callbackScript), 'hex').toString('base64')}'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'`;
-const callbackHtml = `<!doctype html><html lang="en"><meta charset="utf-8"><title>Briefsip sign-in</title><body>Completing sign-in...<script>${callbackScript}</script></body></html>`;
+const callbackHtml = `<!doctype html><html lang="en"><meta charset="utf-8"><title>Minarbot sign-in</title><body>Completing sign-in...<script>${callbackScript}</script></body></html>`;
 
 /** Separate HTTP composition. Never imports or mounts the owner application. Does not listen by itself. */
 export function createHubServer(options: {
@@ -290,8 +291,8 @@ export function startHub(config: {
   } catch (error) { storage.close(); throw error; }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  const file = process.env.BRIEFSIP_HUB_CONFIG;
-  if (!file) throw new Error('BRIEFSIP_HUB_CONFIG must name an explicit isolated hub JSON configuration.');
+  const file = productEnv('MINARBOT_HUB_CONFIG');
+  if (!file) throw new Error('MINARBOT_HUB_CONFIG must name an explicit isolated hub JSON configuration.');
   const hub = startHub(JSON.parse(readFileSync(file, 'utf8')));
   for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => { void hub.close(); });
 }

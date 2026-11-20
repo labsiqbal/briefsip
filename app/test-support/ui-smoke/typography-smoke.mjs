@@ -54,7 +54,7 @@ export async function typographySmoke({ page, check, origin, agentChat, sidebarT
         await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
         const sheet = page.getByRole('dialog', { name: 'Conversation panel', exact: true });
         if (await sheet.isVisible()) await sheet.getByRole('button', { name: 'Close details', exact: true }).click();
-        for (const size of ['default', 'compact', 'large', 'larger']) for (const palette of ['briefsip', 'github', 'catppuccin', 'everforest', 'solarized', 'midnight']) for (const theme of ['dark', 'light']) {
+        for (const size of ['default', 'compact', 'large', 'larger']) for (const palette of ['minarbot', 'github', 'catppuccin', 'everforest', 'solarized', 'midnight']) for (const theme of ['dark', 'light']) {
           await page.evaluate(values => Object.assign(document.documentElement.dataset, values), { textSize: size, colorTheme: palette, theme });
           const layout = await scope.evaluate(el => {
             const css = selector => getComputedStyle(el.querySelector(selector));
@@ -80,7 +80,7 @@ export async function typographySmoke({ page, check, origin, agentChat, sidebarT
             tiles.push({ input: tile, left: (tiles.length % 3) * 576, top: Math.floor(tiles.length / 3) * 432 });
             captures.set(key, tiles);
           }
-          if (width === 1440 && ['default', 'compact'].includes(size) && palette === 'briefsip' && theme === 'dark') {
+          if (width === 1440 && ['default', 'compact'].includes(size) && palette === 'minarbot' && theme === 'dark') {
             await page.mouse.move(0, 0); await scope.locator('.transcript').evaluate(el => { el.scrollTop = el.scrollHeight; });
             await page.screenshot({ path: join(output, `${phase}-${kind}-${size}.png`), animations: 'disabled' });
           }
@@ -149,6 +149,6 @@ export async function typographySmoke({ page, check, origin, agentChat, sidebarT
     await client.detach();
     await writeFile(join(output, `${phase}.json`), JSON.stringify(evidence, null, 2) + '\n');
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.evaluate(() => Object.assign(document.documentElement.dataset, { textSize: 'default', colorTheme: 'briefsip', theme: 'dark' }));
+    await page.evaluate(() => Object.assign(document.documentElement.dataset, { textSize: 'default', colorTheme: 'minarbot', theme: 'dark' }));
   }
 }

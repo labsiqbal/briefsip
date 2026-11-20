@@ -12,10 +12,10 @@ import { startRustServer } from './rust-test-server.ts';
 
 test('Rust project automation matches Node scopes, receipts, versions, calendars, schedules and webhook rotation', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-rust-projects-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-rust-projects-'));
   const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const jwtKey = keys.publicKey.export({ type: 'spki', format: 'pem' }).toString();
-  const auth = { jwtKey, secretKey: 'sk_test_fixture', publishableKey: `pk_test_${Buffer.from('fixture.clerk.accounts.dev$').toString('base64')}`, issuer: 'https://fixture.clerk.accounts.dev', origin: 'https://briefsip.example', development: true };
+  const auth = { jwtKey, secretKey: 'sk_test_fixture', publishableKey: `pk_test_${Buffer.from('fixture.clerk.accounts.dev$').toString('base64')}`, issuer: 'https://fixture.clerk.accounts.dev', origin: 'https://minarbot.example', development: true };
   const account = randomUUID(), project = randomUUID(), agent = randomUUID(), device = randomUUID(), installation = randomUUID(), foreign = randomUUID();
   const now = Math.floor(Date.now() / 1000), generation = randomUUID();
   const input = `${Buffer.from(JSON.stringify({ alg: 'RS256', kid: 'fixture', typ: 'JWT' })).toString('base64url')}.${Buffer.from(JSON.stringify({ iss: auth.issuer, sub: 'user_fixture', sid: 'sess_fixture', azp: auth.origin, exp: now + 600, nbf: now - 1, iat: now - 1 })).toString('base64url')}`;

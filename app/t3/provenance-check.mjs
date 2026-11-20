@@ -1,3 +1,4 @@
+import { productEnv } from '../../desktop/src/rename-env.mjs';
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, renameSync } from "node:fs";
@@ -20,8 +21,8 @@ const pinnedSources = {
   "packages/client-runtime/src/connection/model.ts": ["b2ff91808ab24078dc667e7e14c1b8671fdde54ac9932e997e73a1560745f8dd", "app/t3/connection-registry.ts"],
   "packages/contracts/src/relay.ts": ["94ff0570c801adf8fe72ecf17f812e19d8100acc8aa13eece8c44c7265f5ce3b", "app/t3/connection-registry.ts"],
 };
-const sourceDirectory = values.source ?? process.env.BRIEFSIP_T3_SOURCE;
-assert(sourceDirectory, "Pass --source or set BRIEFSIP_T3_SOURCE to the pinned upstream checkout.");
+const sourceDirectory = values.source ?? productEnv('MINARBOT_T3_SOURCE');
+assert(sourceDirectory, "Pass --source or set MINARBOT_T3_SOURCE to the pinned upstream checkout.");
 const cache = resolve(sourceDirectory);
 const manifestPath = resolve(app, "t3/provenance.json");
 const provenance = JSON.parse(read(manifestPath));

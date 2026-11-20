@@ -32,7 +32,7 @@ test('Rust route inventory stays within frozen Node matchers and reports ported 
   const matchers = new Map(inventory.matchers.map(entry => [entry.kind.startsWith('regex') ? `/${entry.pattern}/${entry.flags ?? ''}` : entry.pattern, matcher(entry)]));
   const endpoints = new Map(inventory.matchers.filter(entry => entry.endpoint === true).map(entry => [entry.kind.startsWith('regex') ? `/${entry.pattern}/${entry.flags ?? ''}` : entry.pattern, matcher(entry)]));
   const publicMatchers = inventory.publicMatchers.map(entry => new RegExp(entry.pattern, entry.flags));
-  const src = new URL('../crates/briefsip-server/src/', import.meta.url);
+  const src = new URL('../crates/minarbot-server/src/', import.meta.url);
   const rust = readdirSync(src, { recursive: true }).map(String)
     .filter(name => name.endsWith('.rs') && !/(^|\/)tests(\/|\.rs$)/.test(name))
     .map(name => readFileSync(new URL(name, src), 'utf8')).join('\n');

@@ -14,12 +14,12 @@ import { launcherCommand } from './rust-test-launcher.ts';
 import { startApp } from './test-bridge.ts';
 import { nativeReleaseFixture } from './test-support/native-release-fixture.ts';
 
-const base = '/labsiqbal/briefsip/releases';
+const base = '/minarbot/minarbot/releases';
 const created = '2026-11-19T09:00:00.000Z';
 const currentVersion = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
 const version = '9.1.2';
 const commit = 'abcdef1234567890abcdef1234567890abcdef12';
-const archive = `briefsip-${version}-linux-x86_64.tar.gz`;
+const archive = `minarbot-${version}-linux-x86_64.tar.gz`;
 const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 
 async function listen(t: TestContext, handler?: RequestListener, port = 0) {
@@ -49,7 +49,7 @@ function cleanup(t: TestContext, close: () => void | Promise<void>) {
   actions.push(close);
 }
 function directory(t: TestContext) {
-  const path = mkdtempSync(join(tmpdir(), 'briefsip-github-'));
+  const path = mkdtempSync(join(tmpdir(), 'minarbot-github-'));
   cleanup(t, () => rmSync(path, { recursive: true, force: true }));
   return path;
 }
@@ -57,7 +57,7 @@ function directory(t: TestContext) {
 function release(root: string, version: string, binary?: string) {
   const id = version + '-' + commit.slice(0, 8), dir = join(root, id);
   mkdirSync(join(dir, 'bin'), { recursive: true });
-  if (binary) writeFileSync(join(dir, 'bin/briefsip-server'), binary, { mode: 0o700 });
+  if (binary) writeFileSync(join(dir, 'bin/minarbot-server'), binary, { mode: 0o700 });
   else nativeReleaseFixture(dir, version);
   writeFileSync(join(dir, 'package.json'), JSON.stringify({ version }));
   const info = { id, version, commit, created, notes: 'Signed fixture', node: process.version, files: fileManifest(dir) };
@@ -135,17 +135,17 @@ async function managed(t: TestContext, path: string, updates: object = {}) {
   const probe = await listen(t);
   const port = Number(new URL(probe.origin).port);
   await probe.close();
-  const launcherSocket = join(data, 'launcher.sock'), database = join(data, 'briefsip.sqlite');
+  const launcherSocket = join(data, 'launcher.sock'), database = join(data, 'minarbot.sqlite');
   const config = join(path, 'server.json');
   writeFileSync(config, JSON.stringify({ database, port, updates: { ...updates, releasesDir: releases, launcherSocket } }), { mode: 0o600 });
-  const binary = rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
+  const binary = rustBinary('minarbot-server', process.env.MINARBOT_RUST_BINARY);
   const wrapper = `#!/bin/sh\nexec '${binary}' --test-config < '${config}'\n`;
   const current = release(releases, currentVersion, wrapper);
   selectRelease(releases, 'current', current.id);
   const launcherConfig = join(path, 'launcher.json');
   writeFileSync(launcherConfig, JSON.stringify({ dataDir: data, releasesDir: releases, port, trialTimeoutMs: 15_000 }), { mode: 0o600 });
   const child = spawn(...launcherCommand(launcherConfig), {
-    env: { ...process.env, HOME: path, BRIEFSIP_TEST_SERVER: 'rust', BRIEFSIP_TEST_PARENT: String(process.pid) },
+    env: { ...process.env, HOME: path, MINARBOT_TEST_SERVER: 'rust', MINARBOT_TEST_PARENT: String(process.pid) },
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   let logs = '';
@@ -185,7 +185,7 @@ test('signed GitHub release resumes through the CDN and completes a real launche
   await waitForTrial(app, id, state.available.id);
   assert.deepEqual(publisher.ranges, [undefined, 'bytes=64-']);
   assert.equal((await api(app.origin, '/api/environment')).version, version);
-  assert(existsSync(join(app.data, '.updates', id, 'briefsip.sqlite')));
+  assert(existsSync(join(app.data, '.updates', id, 'minarbot.sqlite')));
 });
 
 for (const [fault, message, atCheck] of [

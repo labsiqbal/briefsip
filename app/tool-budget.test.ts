@@ -9,7 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { startApp } from './test-bridge.ts';
 
 test('nine distinct tools complete before per-task budget requests a final answer without tools', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-tool-budget-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-tool-budget-'));
   const requests: any[] = [];
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
@@ -50,7 +50,7 @@ import { restoreAgentCreation } from './shared/agent-create.ts';
 
 type ProviderReply = string | { id: string; name: string; args?: object } | number;
 async function fixture(answer: (body: any) => ProviderReply) {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-budget-')), requests: any[] = [];
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-budget-')), requests: any[] = [];
   let captures = 0;
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
@@ -85,7 +85,7 @@ test('budget setting rejects malformed values, migrates legacy profiles, survive
     for (const toolBudget of [null, true, '90', 9, 201, 10.5]) {
       await f.request('/api/agents', { runtime: 'api', id: randomUUID(), ...profile, toolBudget }, 400);
       await f.request(`/api/agents/${f.agent.id}/edit`, { id: randomUUID(), revision: 1, ...profile, toolBudget }, 400);
-      assert.throws(() => parseAgentTemplate({ format: 'briefsip-agent', version: 1, ...profile, threadLimit: 2, toolBudget }));
+      assert.throws(() => parseAgentTemplate({ format: 'minarbot-agent', version: 1, ...profile, threadLimit: 2, toolBudget }));
     }
     const create = { id: randomUUID(), ...profile, toolBudget: 200 };
     const agent = await f.request('/api/agents', { ...create, runtime: 'api' }); assert.equal(agent.tool_budget, 200);
@@ -102,7 +102,7 @@ test('budget setting rejects malformed values, migrates legacy profiles, survive
     assert.deepEqual(await f.request(`/api/agents/${agent.id}/edit`, edit), changed);
     assert.equal((await f.request('/api/agents')).agents.find((row: any) => row.id === agent.id).tool_budget, 15);
   } finally { await f.close(); }
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-budget-migration-')), database = join(dir, 'old.sqlite');
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-budget-migration-')), database = join(dir, 'old.sqlite');
   const db = testDatabase(database), id = randomUUID();
   db.exec('CREATE TABLE agents(id TEXT PRIMARY KEY,name TEXT NOT NULL,model TEXT NOT NULL,instructions TEXT NOT NULL) STRICT');
   db.prepare('INSERT INTO agents VALUES (?,?,?,?)').run(id,'Old','fixture','Help.'); db.close();

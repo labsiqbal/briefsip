@@ -9,7 +9,7 @@ import { startApp } from './test-bridge.ts';
 import { testDatabase } from './test-support/database.ts';
 
 test('manual routine runs keep schedule, deduplicate across restart and enforce revision and overlap', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-routine-test-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-routine-test-'));
   let calls = 0;
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
@@ -117,7 +117,7 @@ test('manual routine runs keep schedule, deduplicate across restart and enforce 
 });
 
 test('routine occurrences persist once and isolate each run from main history', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-routines-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-routines-'));
   const calls: string[][] = [];
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
@@ -200,11 +200,11 @@ test('routine occurrences persist once and isolate each run from main history', 
     const calendar = await fetch(`${app.origin}${list}/calendar.ics`);
     assert.equal(calendar.headers.get('content-type'), 'text/calendar; charset=utf-8');
     const calendarText = await calendar.text();
-    assert(calendarText.includes(`UID:${future.id}@briefsip.local`));
+    assert(calendarText.includes(`UID:${future.id}@minarbot.local`));
     assert(calendarText.includes('DTSTART:20300102T030400Z'));
     assert(calendarText.includes('RRULE:FREQ=SECONDLY;INTERVAL=3600'));
     assert(!calendarText.includes('PRIVATE_CALENDAR_PROMPT'));
-    assert(!calendarText.includes(`UID:${paused.id}@briefsip.local`));
+    assert(!calendarText.includes(`UID:${paused.id}@minarbot.local`));
 
 
 
@@ -212,7 +212,7 @@ test('routine occurrences persist once and isolate each run from main history', 
 });
 
 test('routine hub pages visible local owners, filters safely and never returns secrets', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-routine-hub-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-routine-hub-'));
   const database = join(dir, 'state.sqlite');
   const app = await startApp({ database });
   async function post(path: string, body: unknown, status = 200) {
@@ -253,7 +253,7 @@ test('routine hub pages visible local owners, filters safely and never returns s
 });
 
 test('routine hub delete is revisioned and recoverable, retains runs, revokes webhook and prevents resurrection', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-routine-delete-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-routine-delete-'));
   const provider = createServer((_req,res) => res.end(JSON.stringify({ choices: [{ message: { content: 'Done' }, finish_reason: 'stop' }] })));
   await new Promise<void>(resolve => provider.listen(0,'127.0.0.1',resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');

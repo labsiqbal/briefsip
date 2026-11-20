@@ -11,7 +11,7 @@ import { startApp } from './test-bridge.ts';
 const imageLimit = 4 * 1024 * 1024;
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZ84AAAAASUVORK5CYII=', 'base64');
 for (const family of ['openai-compatible', 'anthropic', 'gemini'] as ProviderFamily[]) test(`${family} image attachments retain scope, bytes, retry identity and bounded rereading`, async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-images-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-images-'));
   let mode = 'text', target = '', stage = 0;
   const payloads: any[] = [];
   const provider = createServer(async (req, res) => {

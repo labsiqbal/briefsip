@@ -21,15 +21,15 @@ case "$token" in bsi_[A-Za-z0-9_-]*) ;; *) echo 'Install token is invalid.' >&2;
 case "$port" in ''|*[!0-9]*) echo 'Invalid port.' >&2; exit 1 ;; esac
 [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || { echo 'Invalid port.' >&2; exit 1; }
 home=${HOME-}; case "$home" in /*) ;; *) echo 'HOME must be an absolute path.' >&2; exit 1 ;; esac
-root=$home/.local/share/briefsip; releases=$root/releases; config=$home/.config/briefsip; envfile=$config/launcher.env; unit=$home/.config/systemd/user/briefsip.service
+root=$home/.local/share/minarbot; releases=$root/releases; config=$home/.config/minarbot; envfile=$config/launcher.env; unit=$home/.config/systemd/user/minarbot.service
 if [ "$dry" -eq 1 ]; then
   printf '%s\n' \
     'Check Linux, curl, tar, sha256sum and user systemd.' \
     'Download and verify a Rust release archive; limit 1 GiB, SHA-256 and manifest verification.' \
-    'Install bin/briefsip-server and bin/briefsip-launcher; preserve provider configuration.' \
-    'Write ~/.config/briefsip/launcher.json and env file (0600); install briefsip.service.' \
+    'Install bin/minarbot-server and bin/minarbot-launcher; preserve provider configuration.' \
+    'Write ~/.config/minarbot/launcher.json and env file (0600); install minarbot.service.' \
     'systemctl --user daemon-reload' \
-    'systemctl --user enable --now briefsip.service' \
+    'systemctl --user enable --now minarbot.service' \
     'Wait for http://127.0.0.1:PORT/api/environment and advertised origin.' \
     'POST source/api/install/pairing-code with Bearer [redacted] (consumes token).' \
     'POST local/api/environment to set display name; POST local/api/machines to pair both ways.' \
@@ -66,7 +66,7 @@ tar -tvzf "$archive" | while IFS= read -r entry; do
 done
 tar -xzf "$archive" -C "$stage" --no-same-owner --no-same-permissions --keep-directory-symlink
 if find "$stage" \( -type l -o -type b -o -type c -o -type p \) -print -quit | grep -q .; then echo 'Release archive contains unsupported entries.' >&2; exit 1; fi
-[ -x "$stage/bin/briefsip-server" ] && [ -x "$stage/bin/briefsip-launcher" ] || { echo 'Release lacks Rust binaries.' >&2; exit 1; }
+[ -x "$stage/bin/minarbot-server" ] && [ -x "$stage/bin/minarbot-launcher" ] || { echo 'Release lacks Rust binaries.' >&2; exit 1; }
 [ -f "$stage/release.json" ] || { echo 'Release manifest missing.' >&2; exit 1; }
 release=$releases/$id
 [ ! -e "$release" ] && mv "$stage" "$release" || true
@@ -76,13 +76,13 @@ cp "$release/machine/uninstall-machine.sh" "$root/scripts/uninstall-machine.sh"
 cat > "$root/scripts/start.sh" <<EOF
 #!/bin/sh
 set -eu
-exec "$releases/current/bin/briefsip-launcher" --config "$config/launcher.json"
+exec "$releases/current/bin/minarbot-launcher" --config "$config/launcher.json"
 EOF
 chmod 700 "$root/scripts/start.sh" "$root/scripts/uninstall-machine.sh"
 printf '%s\n' "{\"dataDir\":\"$root/data\",\"envFile\":\"$envfile\",\"releasesDir\":\"$releases\",\"port\":$port}" > "$config/launcher.json"
 cat > "$unit" <<EOF
 [Unit]
-Description=Briefsip Rust server launcher
+Description=Minarbot Rust server launcher
 After=network.target
 
 [Service]
@@ -95,11 +95,11 @@ RestartSec=2
 WantedBy=default.target
 EOF
 systemctl --user daemon-reload
-systemctl --user enable --now briefsip.service
+systemctl --user enable --now minarbot.service
 local=http://127.0.0.1:$port
 ready=0
 for _ in $(seq 1 240); do if curl -fsS --max-time 1 "$local/api/environment" >/dev/null 2>&1; then ready=1; break; fi; sleep 0.5; done
-[ "$ready" -eq 1 ] || { echo 'Briefsip did not become healthy. Check systemctl --user status briefsip.service.' >&2; exit 1; }
+[ "$ready" -eq 1 ] || { echo 'Minarbot did not become healthy. Check systemctl --user status minarbot.service.' >&2; exit 1; }
 case "$name" in *[!A-Za-z0-9._-]*|'') name=$(hostname);; esac
 if ! curl -fsS --max-time 10 "$local/api/machines" | grep -Fq '"origin":"'"$source"'"'; then
   request_id=$(cat /proc/sys/kernel/random/uuid)
@@ -114,4 +114,4 @@ if ! curl -fsS --max-time 10 "$local/api/machines" | grep -Fq '"origin":"'"$sour
     --data '{"id":"'"$request_id"'","origin":"'"$source"'","code":"'"$code"'"}' "$local/api/machines" >/dev/null
 fi
 [ "$serve" -eq 0 ] || echo 'Tailscale Serve must be configured separately for this installation.'
-printf '%s\n' "Briefsip Rust release installed: $id" "Data: $root/data" "Service: briefsip.service"
+printf '%s\n' "Minarbot Rust release installed: $id" "Data: $root/data" "Service: minarbot.service"

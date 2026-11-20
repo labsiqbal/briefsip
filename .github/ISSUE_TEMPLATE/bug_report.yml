@@ -1,11 +1,11 @@
 name: Bug report
-description: Something in Briefsip does not work as expected.
+description: Something in Minarbot does not work as expected.
 labels: ["bug", "needs-triage"]
 body:
   - type: input
     id: version
     attributes:
-      label: Briefsip version
+      label: Minarbot version
       description: Shown in Settings > Updates.
       placeholder: 0.13.13
     validations:
@@ -37,6 +37,6 @@ body:
     id: actual
     attributes:
       label: What happened
-      description: Include error messages, logs (`journalctl --user -u briefsip.service`) or a screenshot. Remove tokens and other secrets first.
+      description: Include error messages, logs (`journalctl --user -u minarbot.service`) or a screenshot. Remove tokens and other secrets first.
     validations:
       required: true

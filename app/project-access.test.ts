@@ -8,7 +8,7 @@ import { createClerkClient } from '@clerk/backend';
 import { canonicalHttp } from './test-support/canonical-http.ts';
 
 async function fixture() {
-  const f = canonicalHttp('briefsip-project-access-');
+  const f = canonicalHttp('minarbot-project-access-');
   const { db, owner } = f;
   const project = randomUUID(), agent = randomUUID(), secondAgent = randomUUID(), home = randomUUID(), installation = randomUUID();
   const member = f.addAccount('user_member'), stranger = f.addAccount('user_stranger');
@@ -25,7 +25,7 @@ async function fixture() {
   let mailbox = 'member@example.com';
   const clerk = createClerkClient({ ...f.auth, telemetry: { disabled: true } });
   clerk.users.getUser = async subject => ({ id: subject, banned: false, locked: false, emailAddresses: [{ emailAddress: mailbox, verification: { status: 'verified' } }] }) as Awaited<ReturnType<typeof clerk.users.getUser>>;
-  const mail = { from: 'Briefsip <noreply@example.com>', origin: 'https://briefsip.example', keyId: randomUUID(), key: randomBytes(32), lookupKey: randomBytes(32) };
+  const mail = { from: 'Minarbot <noreply@example.com>', origin: 'https://minarbot.example', keyId: randomUUID(), key: randomBytes(32), lookupKey: randomBytes(32) };
   const path = `/api/projects/${project}`;
   const access = {
     createInvitation: (body: Record<string, unknown>) => f.request(path + '/invitations', 'POST', body),

@@ -10,7 +10,7 @@ import { restoreWorkspace } from './test-support/backup.ts';
 import { once } from 'node:events';
 
 test('MCP tests before save, protects credentials/grants and journals success or uncertainty without replay', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-mcp-')), token = 'test-secret-credential';
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-mcp-')), token = 'test-secret-credential';
   let calls = 0, drift = false, lost = false, sse = false, hold = false, failProvider = false, repeat = false, connection = '', providerRaw = '', bearer = token, initialized = 0, deleted = 0, leakKey = false, paged = false;
   let held: (() => void) | undefined;
   const external = createServer(async (req, res) => {

@@ -188,11 +188,11 @@ async function screenshot(label, target = page) {
 }
 
 async function captureComputerThemes(label) {
-  for (const [palette, theme] of [['briefsip', 'dark'], ['briefsip', 'light'], ['catppuccin', 'dark']]) {
+  for (const [palette, theme] of [['minarbot', 'dark'], ['minarbot', 'light'], ['catppuccin', 'dark']]) {
     await page.evaluate(({ palette, theme }) => { document.documentElement.dataset.colorTheme = palette; document.documentElement.dataset.theme = theme; }, { palette, theme });
     await screenshot(`${label}-${palette}-${theme}`);
   }
-  await page.evaluate(() => { document.documentElement.dataset.colorTheme = 'briefsip'; document.documentElement.dataset.theme = 'dark'; });
+  await page.evaluate(() => { document.documentElement.dataset.colorTheme = 'minarbot'; document.documentElement.dataset.theme = 'dark'; });
 }
 
 async function check(name, run) {
@@ -211,8 +211,8 @@ async function check(name, run) {
   item.durationMs = Date.now() - start;
   receipt.checks.push(item);
   console.log(`${item.status.toUpperCase()} ${name}${item.status === 'fail' ? `\n${item.message}` : ''}`);
-  if (process.env.BRIEFSIP_SMOKE_SET3_ONLY === '1' && item.status === 'fail') throw new Error('SMOKE_STOP_AFTER');
-  if (process.env.BRIEFSIP_SMOKE_STOP_AFTER === name) throw new Error('SMOKE_STOP_AFTER');
+  if (process.env.MINARBOT_SMOKE_SET3_ONLY === '1' && item.status === 'fail') throw new Error('SMOKE_STOP_AFTER');
+  if (process.env.MINARBOT_SMOKE_STOP_AFTER === name) throw new Error('SMOKE_STOP_AFTER');
 }
 
 async function settingsDataSmoke() {
@@ -229,15 +229,15 @@ async function settingsDataSmoke() {
   async function matrix(label, scope) {
     for (const viewport of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }]) {
       await page.setViewportSize(viewport);
-      for (const [palette, theme] of [['briefsip', 'dark'], ['briefsip', 'light'], ['catppuccin', 'dark']]) {
+      for (const [palette, theme] of [['minarbot', 'dark'], ['minarbot', 'light'], ['catppuccin', 'dark']]) {
         await page.evaluate(({ palette, theme }) => { document.documentElement.dataset.colorTheme = palette; document.documentElement.dataset.theme = theme; }, { palette, theme });
         await scope.evaluate(el => { if (el.matches('.k-dialog')) el.querySelector('.k-dialog__body').scrollTop=0; if (el.matches('.set4-page')) el.closest('.app-settings__main').scrollTop=0; });
         if(label==='transcribe')await scope.scrollIntoViewIfNeeded();
-        if(label==='install-briefsip'){await page.keyboard.press('Tab');await scope.getByText('Linux · Requirements',{exact:true}).focus();const tooltip=page.getByRole('tooltip').filter({hasText:'Requires Node.js'});await visible(tooltip);assert(await tooltip.evaluate(el=>el.getBoundingClientRect().width<=340),'Tooltip exceeds readable width');}
+        if(label==='install-minarbot'){await page.keyboard.press('Tab');await scope.getByText('Linux · Requirements',{exact:true}).focus();const tooltip=page.getByRole('tooltip').filter({hasText:'Requires Node.js'});await visible(tooltip);assert(await tooltip.evaluate(el=>el.getBoundingClientRect().width<=340),'Tooltip exceeds readable width');}
         await contain(scope); await screenshot(`set4-${label}-${palette}-${theme}-${viewport.width}`);
       }
     }
-    await page.setViewportSize(receipt.viewport); await page.evaluate(() => { document.documentElement.dataset.colorTheme = 'briefsip'; document.documentElement.dataset.theme = 'dark'; });
+    await page.setViewportSize(receipt.viewport); await page.evaluate(() => { document.documentElement.dataset.colorTheme = 'minarbot'; document.documentElement.dataset.theme = 'dark'; });
   }
   await check('SET4 Machines list, directional switches and setup dialogs', async () => {
     const panel = await settings('Machines');
@@ -253,7 +253,7 @@ async function settingsDataSmoke() {
       assert.equal(requests.length,4);for(const req of requests){assert.deepEqual(Object.keys(req.body).sort(),['allowed','environmentId','id']);assert.match(req.body.id,/^[0-9a-f-]{36}$/);}
       await matrix('machine-detail',detail);assert.equal(await detail.getByRole('button').last().innerText(),'Unpair machine');await close(detail);
     } finally {page.off('request',record);}
-    for(const name of ['Install Briefsip','Pair machine','Show pairing code']) {const dialog=await setup(name);assert.equal(await page.locator('.k-dialog[role="dialog"]').count(),1);await matrix(name.toLowerCase().replaceAll(' ','-'),dialog);await close(dialog);await focusRestored(panel.getByRole('button',{name:'Add machine',exact:true}));}
+    for(const name of ['Install Minarbot','Pair machine','Show pairing code']) {const dialog=await setup(name);assert.equal(await page.locator('.k-dialog[role="dialog"]').count(),1);await matrix(name.toLowerCase().replaceAll(' ','-'),dialog);await close(dialog);await focusRestored(panel.getByRole('button',{name:'Add machine',exact:true}));}
     await cleanPage(panel);
   });
   await check('SET4 Pairing code generates on request, copies, expires and clears',async()=>{
@@ -290,7 +290,7 @@ async function settingsDataSmoke() {
   await check('SET4 Shared data list, schema, SQL, delete recovery and containment',async()=>{
     const panel=await settings('Shared data');await visible(panel.getByText('settings_fixture',{exact:true}));assert.equal(await panel.getByRole('button',{name:'SQL query',exact:true}).getAttribute('aria-expanded'),'false');await panel.getByRole('button',{name:'Schema',exact:true}).click();await visible(panel.getByRole('region',{name:'Columns in settings_fixture',exact:true}));await matrix('shared-data',panel.locator('.set4-page'));await panel.getByRole('button',{name:'SQL query',exact:true}).click();await panel.getByRole('textbox',{name:'SQL query',exact:true}).fill('SELECT * FROM settings_fixture');const pending=page.waitForRequest(req=>new URL(req.url()).pathname==='/api/data/query');await panel.getByRole('button',{name:'Run query',exact:true}).click();assert.deepEqual(Object.keys((await pending).postDataJSON()).sort(),['id','revision','sql']);await visible(panel.getByText('Synthetic shared row',{exact:true}));await matrix('shared-query',panel.locator('.set4-page'));
     const route='**/api/data/drop',commands=[];let fail=true;await page.route(route,r=>{commands.push(r.request().postDataJSON());return fail?broken(r):r.continue();});
-    try {await panel.getByRole('button',{name:'Menu settings_fixture',exact:true}).click();await page.getByRole('menuitem',{name:'Delete table settings_fixture',exact:true}).click();const confirm=page.getByRole('alertdialog');await visible(confirm);await confirm.getByRole('button',{name:'Cancel',exact:true}).click();assert.equal(commands.length,0);await panel.getByRole('button',{name:'Menu settings_fixture',exact:true}).click();await page.getByRole('menuitem',{name:'Delete table settings_fixture',exact:true}).click();await page.getByRole('alertdialog').getByRole('button',{name:'Delete table',exact:true}).click();await visible(panel.getByText('Not confirmed: delete settings_fixture',{exact:true}));await screenshot('set4-shared-delete-recovery');const saved=await page.evaluate(()=>JSON.parse(sessionStorage.getItem('briefsip:shared-data-drop')));assert.deepEqual(saved,commands[0]);fail=false;await panel.getByRole('button',{name:'Try again',exact:true}).click();await visible(panel.getByText('No tables',{exact:true}));assert.deepEqual(commands[0],commands[1]);assert.equal(await page.evaluate(()=>sessionStorage.getItem('briefsip:shared-data-drop')),null);await screenshot('set4-shared-empty');}
+    try {await panel.getByRole('button',{name:'Menu settings_fixture',exact:true}).click();await page.getByRole('menuitem',{name:'Delete table settings_fixture',exact:true}).click();const confirm=page.getByRole('alertdialog');await visible(confirm);await confirm.getByRole('button',{name:'Cancel',exact:true}).click();assert.equal(commands.length,0);await panel.getByRole('button',{name:'Menu settings_fixture',exact:true}).click();await page.getByRole('menuitem',{name:'Delete table settings_fixture',exact:true}).click();await page.getByRole('alertdialog').getByRole('button',{name:'Delete table',exact:true}).click();await visible(panel.getByText('Not confirmed: delete settings_fixture',{exact:true}));await screenshot('set4-shared-delete-recovery');const saved=await page.evaluate(()=>JSON.parse(sessionStorage.getItem('minarbot:shared-data-drop')));assert.deepEqual(saved,commands[0]);fail=false;await panel.getByRole('button',{name:'Try again',exact:true}).click();await visible(panel.getByText('No tables',{exact:true}));assert.deepEqual(commands[0],commands[1]);assert.equal(await page.evaluate(()=>sessionStorage.getItem('minarbot:shared-data-drop')),null);await screenshot('set4-shared-empty');}
     finally{await page.unroute(route);}
   });
   await check('SET4 Shared data and host metrics error recovery',async()=>{
@@ -300,8 +300,8 @@ async function settingsDataSmoke() {
     try{const panel=await settings('Machines');await panel.getByRole('button',{name:'Resources',exact:true}).click();const detail=page.getByRole('dialog',{name:'This device',exact:true});await visible(detail.getByRole('alert'));await screenshot('set4-metrics-error');fail=false;await detail.getByRole('button',{name:'Reload metrics',exact:true}).click();await visible(detail.getByText('Host CPU',{exact:true}));await hidden(detail.getByRole('alert'));await close(detail);}finally{await page.unroute('**/api/host-metrics');}
   });
   await check('SET4 Backup download consent, restore CLI dialog and themes',async()=>{
-    const panel=await settings('Backup & restore');await matrix('backup',panel.locator('.set4-page'));await panel.getByRole('button',{name:'Open',exact:true}).click();const restore=page.getByRole('dialog',{name:'Restore backup',exact:true});await visible(restore.getByRole('region',{name:'Backup restore command',exact:true}));assert.equal(await restore.getByRole('region',{name:'Backup restore command',exact:true}).innerText(),'node --experimental-strip-types backup.ts restore BACKUP.sqlite /new-directory/briefsip.sqlite');await matrix('restore',restore);await close(restore);
-    await panel.getByRole('button',{name:'Download',exact:true}).click();const consent=page.getByRole('alertdialog',{name:'Download workspace backup?',exact:true});await visible(consent.getByText(/webhook secrets.*not encrypted/));await consent.getByRole('button',{name:'Cancel',exact:true}).click();await panel.getByRole('button',{name:'Download',exact:true}).click();const download=page.waitForEvent('download'),request=page.waitForRequest(req=>new URL(req.url()).pathname==='/api/backup');await page.getByRole('alertdialog').getByRole('button',{name:'Download backup',exact:true}).click();const req=await request;assert.equal(req.method(),'POST');assert.equal(req.postDataJSON().confirmed,true);assert.deepEqual(Object.keys(req.postDataJSON()).sort(),['confirmed','id']);assert.equal((await download).suggestedFilename(),'briefsip-workspace.sqlite');await visible(panel.getByText('Download started. Check the saved file.',{exact:true}));
+    const panel=await settings('Backup & restore');await matrix('backup',panel.locator('.set4-page'));await panel.getByRole('button',{name:'Open',exact:true}).click();const restore=page.getByRole('dialog',{name:'Restore backup',exact:true});await visible(restore.getByRole('region',{name:'Backup restore command',exact:true}));assert.equal(await restore.getByRole('region',{name:'Backup restore command',exact:true}).innerText(),'node --experimental-strip-types backup.ts restore BACKUP.sqlite /new-directory/minarbot.sqlite');await matrix('restore',restore);await close(restore);
+    await panel.getByRole('button',{name:'Download',exact:true}).click();const consent=page.getByRole('alertdialog',{name:'Download workspace backup?',exact:true});await visible(consent.getByText(/webhook secrets.*not encrypted/));await consent.getByRole('button',{name:'Cancel',exact:true}).click();await panel.getByRole('button',{name:'Download',exact:true}).click();const download=page.waitForEvent('download'),request=page.waitForRequest(req=>new URL(req.url()).pathname==='/api/backup');await page.getByRole('alertdialog').getByRole('button',{name:'Download backup',exact:true}).click();const req=await request;assert.equal(req.method(),'POST');assert.equal(req.postDataJSON().confirmed,true);assert.deepEqual(Object.keys(req.postDataJSON()).sort(),['confirmed','id']);assert.equal((await download).suggestedFilename(),'minarbot-workspace.sqlite');await visible(panel.getByText('Download started. Check the saved file.',{exact:true}));
   });
   await check('SET4 Backup error and retry recover without closing Settings',async()=>{
     const probe=await page.context().newPage(),errors=[];probe.on('pageerror',e=>errors.push(e.message));probe.on('console',message=>{if(message.type()!=='error')return;const detail={message:message.text(),url:message.location().url};if(detail.url===origin+'/api/backup'&&/409/.test(detail.message)){(receipt.expectedErrors??=[]).push(detail);}else errors.push(detail);});
@@ -311,8 +311,8 @@ async function settingsDataSmoke() {
   await check('SET4 Updates apply exact retry, reconnect, completion and rollback',async()=>{
     const available={id:'0.2.0-12345678',version:'0.2.0',commit:'12345678'.repeat(5),created:'2026-11-15T00:00:00Z',notes:'Synthetic release. Automatic rollback available.'};const state={current:{...available,version:'0.1.0'},feed:available,available,launcherAvailable:true,runningTurns:2};let offline=false,applyFail=true;const commands=[];
     await page.route('**/api/updates',r=>offline?broken(r):json(r,state));await page.route('**/api/updates/apply',r=>{commands.push(r.request().postDataJSON());return applyFail?broken(r):json(r,{accepted:true});});
-    try {const panel=await settings('Updates');await visible(panel.getByText('Briefsip 0.2.0',{exact:true}));await matrix('updates',panel.locator('.set4-page'));await panel.getByRole('button',{name:'Update now',exact:true}).click();let confirm=page.getByRole('alertdialog',{name:'Update to 0.2.0?',exact:true});await visible(confirm.getByText(/2 running turns will be interrupted/));await confirm.getByRole('button',{name:'Cancel',exact:true}).click();assert.equal(commands.length,0);await panel.getByRole('button',{name:'Update now',exact:true}).click();await page.getByRole('alertdialog').getByRole('button',{name:'Update now',exact:true}).click();await visible(panel.getByRole('button',{name:'Retry update',exact:true}));assert.deepEqual(await page.evaluate(()=>JSON.parse(sessionStorage.getItem('briefsip:update'))),commands[0]);applyFail=false;await panel.getByRole('button',{name:'Retry update',exact:true}).click();await page.waitForFunction(()=>document.querySelector('[aria-busy="true"]')===null);assert.deepEqual(commands[0],commands[1]);offline=true;await visible(panel.getByText('Waiting for server restart',{exact:true}));await screenshot('set4-update-reconnect');offline=false;state.lastAttempt={...commands[0],status:'done',target:available.id,started:'2026-11-15T00:00:00Z'};await visible(panel.getByText('Update complete',{exact:true}).first());await page.waitForFunction(()=>sessionStorage.getItem('briefsip:update')===null);state.lastAttempt.status='rolled-back';state.lastAttempt.reason='Synthetic health check failure';await visible(panel.getByText('Rolled back',{exact:true}));await screenshot('set4-update-rollback');await workspace();}
-    finally{await page.unroute('**/api/updates');await page.unroute('**/api/updates/apply');await page.evaluate(()=>sessionStorage.removeItem('briefsip:update'));}
+    try {const panel=await settings('Updates');await visible(panel.getByText('Minarbot 0.2.0',{exact:true}));await matrix('updates',panel.locator('.set4-page'));await panel.getByRole('button',{name:'Update now',exact:true}).click();let confirm=page.getByRole('alertdialog',{name:'Update to 0.2.0?',exact:true});await visible(confirm.getByText(/2 running turns will be interrupted/));await confirm.getByRole('button',{name:'Cancel',exact:true}).click();assert.equal(commands.length,0);await panel.getByRole('button',{name:'Update now',exact:true}).click();await page.getByRole('alertdialog').getByRole('button',{name:'Update now',exact:true}).click();await visible(panel.getByRole('button',{name:'Retry update',exact:true}));assert.deepEqual(await page.evaluate(()=>JSON.parse(sessionStorage.getItem('minarbot:update'))),commands[0]);applyFail=false;await panel.getByRole('button',{name:'Retry update',exact:true}).click();await page.waitForFunction(()=>document.querySelector('[aria-busy="true"]')===null);assert.deepEqual(commands[0],commands[1]);offline=true;await visible(panel.getByText('Waiting for server restart',{exact:true}));await screenshot('set4-update-reconnect');offline=false;state.lastAttempt={...commands[0],status:'done',target:available.id,started:'2026-11-15T00:00:00Z'};await visible(panel.getByText('Update complete',{exact:true}).first());await page.waitForFunction(()=>sessionStorage.getItem('minarbot:update')===null);state.lastAttempt.status='rolled-back';state.lastAttempt.reason='Synthetic health check failure';await visible(panel.getByText('Rolled back',{exact:true}));await screenshot('set4-update-rollback');await workspace();}
+    finally{await page.unroute('**/api/updates');await page.unroute('**/api/updates/apply');await page.evaluate(()=>sessionStorage.removeItem('minarbot:update'));}
   });
   await check('SET4 Updates fan-out review, exact retry and disabled reasons',async()=>{
     const list=await fetch(origin+'/api/machines').then(r=>r.json()),machine={...list.machines[0],allowUpdates:true,status:'online'},disabled={...machine,id:randomUUID(),name:'Offline fixture',status:'offline'};const release={id:'0.2.0-12345678',version:'0.2.0',commit:'12345678'.repeat(5),created:'2026-11-15T00:00:00Z',notes:'Fixture'};const commands=[];let fail=true,peerReady=true;
@@ -324,7 +324,7 @@ async function settingsDataSmoke() {
     await agentChat();const agents=await fetch(origin+'/api/agents').then(r=>r.json()),agent=agents.agents.find(row=>row.name===lead),id=randomUUID(),path=`/api/agents/${agent.id}/files/${id}`;const filesRoute=`**/api/agents/${agent.id}/panel/files`;await page.route(filesRoute,r=>json(r,[{id,name:'set4-video.mp4',size:22}]));
     let info={provider:{id:'fixture',origin:'http://127.0.0.1:1234',model:'fixture-transcribe'},format:'mp4',operation:null},fail=false;const commands=[],route=`**${path}?transcription=1`;
     await page.route(route,r=>{if(r.request().method()==='GET')return fail?broken(r):json(r,info);const body=r.request().postDataJSON();commands.push(body);if(body.action==='cancel')info.operation={...info.operation,status:'cancelled'};else info.operation={id:body.id,status:'pending',model:info.provider.model,origin:info.provider.origin,result:null,usage:null};return json(r,info.operation);});
-    try {await page.reload();const details=page.getByRole('complementary',{name:'Conversation details',exact:true});const show=page.getByRole('button',{name:'Show details',exact:true});if(await show.isVisible())await show.click();await details.getByRole('tab',{name:'Files',exact:true}).click();await visible(details.getByText('set4-video.mp4',{exact:true}));await details.getByRole('button',{name:'File actions: set4-video.mp4',exact:true}).click();await page.getByRole('menuitem',{name:'Transcribe',exact:true}).click();const actions=details;await actions.getByRole('button',{name:'Transcribe',exact:true}).click();const controls=actions.locator('.set4-transcription');await visible(controls.getByText(/Whole file is sent/));const send=controls.getByRole('button',{name:'Transcribe',exact:true});assert(await send.isDisabled());assert(!(await controls.getByRole('checkbox').isChecked()));await matrix('transcribe',controls);await controls.getByRole('checkbox').check();await send.click();await visible(controls.getByText(/Processing/));assert.equal(commands[0].consent,true);assert.deepEqual(Object.keys(commands[0]).sort(),['consent','id','provider']);await controls.getByRole('button',{name:'Cancel transcription',exact:true}).click();await visible(controls.getByText(/Cancelled in Briefsip/));assert.deepEqual(commands[1],{action:'cancel',id:commands[0].id});await visible(controls.getByRole('checkbox',{name:/additional charge/}));assert(!(await controls.getByRole('checkbox').isChecked()));await controls.getByRole('checkbox').check();await controls.getByRole('button',{name:'Transcribe',exact:true}).click();assert.equal(commands[2].retryOf,commands[0].id);info.operation={...info.operation,status:'uncertain'};await controls.getByRole('button',{name:'Reload transcription status',exact:true}).click();await visible(controls.getByText(/previous result is uncertain/));await screenshot('set4-transcription-uncertain');fail=true;await controls.getByRole('button',{name:'Reload transcription status',exact:true}).click();await visible(controls.getByRole('alert'));fail=false;info.provider=null;await controls.getByRole('button',{name:'Reload transcription status',exact:true}).click();await visible(controls.getByText('Transcription unavailable. No provider configured.',{exact:true}));}
+    try {await page.reload();const details=page.getByRole('complementary',{name:'Conversation details',exact:true});const show=page.getByRole('button',{name:'Show details',exact:true});if(await show.isVisible())await show.click();await details.getByRole('tab',{name:'Files',exact:true}).click();await visible(details.getByText('set4-video.mp4',{exact:true}));await details.getByRole('button',{name:'File actions: set4-video.mp4',exact:true}).click();await page.getByRole('menuitem',{name:'Transcribe',exact:true}).click();const actions=details;await actions.getByRole('button',{name:'Transcribe',exact:true}).click();const controls=actions.locator('.set4-transcription');await visible(controls.getByText(/Whole file is sent/));const send=controls.getByRole('button',{name:'Transcribe',exact:true});assert(await send.isDisabled());assert(!(await controls.getByRole('checkbox').isChecked()));await matrix('transcribe',controls);await controls.getByRole('checkbox').check();await send.click();await visible(controls.getByText(/Processing/));assert.equal(commands[0].consent,true);assert.deepEqual(Object.keys(commands[0]).sort(),['consent','id','provider']);await controls.getByRole('button',{name:'Cancel transcription',exact:true}).click();await visible(controls.getByText(/Cancelled in Minarbot/));assert.deepEqual(commands[1],{action:'cancel',id:commands[0].id});await visible(controls.getByRole('checkbox',{name:/additional charge/}));assert(!(await controls.getByRole('checkbox').isChecked()));await controls.getByRole('checkbox').check();await controls.getByRole('button',{name:'Transcribe',exact:true}).click();assert.equal(commands[2].retryOf,commands[0].id);info.operation={...info.operation,status:'uncertain'};await controls.getByRole('button',{name:'Reload transcription status',exact:true}).click();await visible(controls.getByText(/previous result is uncertain/));await screenshot('set4-transcription-uncertain');fail=true;await controls.getByRole('button',{name:'Reload transcription status',exact:true}).click();await visible(controls.getByRole('alert'));fail=false;info.provider=null;await controls.getByRole('button',{name:'Reload transcription status',exact:true}).click();await visible(controls.getByText('Transcription unavailable. No provider configured.',{exact:true}));}
     finally{await page.unroute(route);await page.unroute(filesRoute);await workspace();}
   });
 }
@@ -447,7 +447,7 @@ async function settingsConnectionsSmoke(mcpPort) {
   const matrix = async label => {
     for (const viewport of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }]) {
       await page.setViewportSize(viewport);
-      for (const [palette, theme] of [['briefsip', 'dark'], ['briefsip', 'light'], ['catppuccin', 'dark']]) {
+      for (const [palette, theme] of [['minarbot', 'dark'], ['minarbot', 'light'], ['catppuccin', 'dark']]) {
         await page.evaluate(({ palette, theme }) => { document.documentElement.dataset.colorTheme = palette; document.documentElement.dataset.theme = theme; }, { palette, theme });
         await screenshot(`set3-${label}-${palette}-${theme}-${viewport.width}x${viewport.height}`);
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'SET3 page overflow');
@@ -456,7 +456,7 @@ async function settingsConnectionsSmoke(mcpPort) {
       }
     }
     await page.setViewportSize(receipt.viewport);
-    await page.evaluate(() => { document.documentElement.dataset.colorTheme = 'briefsip'; document.documentElement.dataset.theme = 'dark'; });
+    await page.evaluate(() => { document.documentElement.dataset.colorTheme = 'minarbot'; document.documentElement.dataset.theme = 'dark'; });
   };
   await check('SET3 Skills tabs and pack saved-version installation', async () => {
     let dialog = await settings('Skills');
@@ -511,7 +511,7 @@ async function settingsConnectionsSmoke(mcpPort) {
       await dialog.getByRole('button', { name: 'Integration setup', exact: true }).click(); await page.getByRole('menuitem', { name: 'Replace key', exact: true }).click(); await page.getByRole('alertdialog').getByRole('button', { name: 'Cancel', exact: true }).click();
       await dialog.getByRole('button', { name: 'Integration setup', exact: true }).click(); await page.getByRole('menuitem', { name: 'Replace key', exact: true }).click(); await page.getByRole('alertdialog').getByRole('button', { name: 'Replace key', exact: true }).click();
       const replacement = page.getByRole('dialog', { name: 'Replace key', exact: true }); await replacement.getByLabel('Composio API key', { exact: true }).fill('set3-fixture-composio-key'); await replacement.getByRole('button', { name: 'Save key', exact: true }).click(); await visible(replacement.getByText('Not confirmed', { exact: true }));
-      const keyCommand = commands.at(-1); assert.deepEqual(Object.keys(keyCommand.body).sort(), ['id', 'revision']); assert(!(await page.evaluate(() => sessionStorage.getItem('briefsip:connected-app-command'))).includes('set3-fixture-composio-key'));
+      const keyCommand = commands.at(-1); assert.deepEqual(Object.keys(keyCommand.body).sort(), ['id', 'revision']); assert(!(await page.evaluate(() => sessionStorage.getItem('minarbot:connected-app-command'))).includes('set3-fixture-composio-key'));
       await page.keyboard.press('Escape'); await hidden(replacement); await settings('Skills'); dialog = await settings('Connected apps'); await dialog.getByRole('button', { name: 'Enter key', exact: true }).click();
       const retry = page.getByRole('dialog', { name: 'Set up Composio', exact: true }); assert.equal(await retry.getByLabel('Composio API key', { exact: true }).inputValue(), ''); assert(await retry.getByRole('button', { name: 'Try again', exact: true }).last().isDisabled()); await retry.getByLabel('Composio API key', { exact: true }).fill('set3-fixture-composio-key'); await retry.getByRole('button', { name: 'Try again', exact: true }).last().click(); await hidden(retry); assert.deepEqual(commands.at(-1), keyCommand);
       await projectTab('Connected apps'); await visible(page.getByRole('heading', { name: 'SET3 project', exact: true })); await matrix('project-apps');
@@ -559,12 +559,12 @@ async function settingsConnectionsSmoke(mcpPort) {
     await page.getByRole('switch', { name: 'Expose environment to the agent computer', exact: true }).click(); await visible(page.getByRole('alertdialog')); await page.getByRole('alertdialog').getByRole('button', { name: 'Cancel', exact: true }).click();
   });
   for (const [section, path, storage, packs] of [
-    ['Skills', '/api/skills', 'briefsip:skill-command', false],
-    ['Skills', '/api/skill-packs', 'briefsip:pack-command', true],
-    ['Connected apps', '/api/connected-apps?search=&category=&after=', 'briefsip:connected-app-command', false],
-    ['MCP connections', '/api/mcp', 'briefsip:mcp-command', false],
-    ['External access', '/api/mcp-server/peer-tokens', 'briefsip:mcp-server-command', false],
-    ['Environment', `/api/projects/${project.id}/environment`, `briefsip:project-environment:${project.id}`, false],
+    ['Skills', '/api/skills', 'minarbot:skill-command', false],
+    ['Skills', '/api/skill-packs', 'minarbot:pack-command', true],
+    ['Connected apps', '/api/connected-apps?search=&category=&after=', 'minarbot:connected-app-command', false],
+    ['MCP connections', '/api/mcp', 'minarbot:mcp-command', false],
+    ['External access', '/api/mcp-server/peer-tokens', 'minarbot:mcp-server-command', false],
+    ['Environment', `/api/projects/${project.id}/environment`, `minarbot:project-environment:${project.id}`, false],
   ]) await check(`SET3 ${packs ? 'Packs' : section} loading error reload corrupt recovery`, async () => {
     await workspace();
     let release; const gate = new Promise(resolve => { release = resolve; }); const pattern = origin + path;
@@ -588,9 +588,9 @@ async function settingsConnectionsSmoke(mcpPort) {
     const source = skillRows.skills.find(row => row.name === 'set3-skill');
     const connections = await fetch(origin + '/api/mcp').then(response => response.json()); const connection = connections.items.find(row => row.name === 'SET3 service');
     for (const [section, storage, command, packs] of [
-      ['Skills', 'briefsip:pack-command', { path: '/api/skill-packs', body: { id: randomUUID(), name: 'SET3 recovered pack', revision: 0, members: [{ skill: source.id, version: 1 }] } }, true],
-      ['MCP connections', 'briefsip:mcp-command', { path: `/api/mcp/${connection.id}`, body: { id: randomUUID(), revision: connection.revision, enabled: false } }, false],
-      ['External access', 'briefsip:mcp-server-command', { path: '/api/mcp-server/peer-tokens', body: { id: randomUUID(), name: 'SET3 lost token', scopes: ['agents:read'] } }, false],
+      ['Skills', 'minarbot:pack-command', { path: '/api/skill-packs', body: { id: randomUUID(), name: 'SET3 recovered pack', revision: 0, members: [{ skill: source.id, version: 1 }] } }, true],
+      ['MCP connections', 'minarbot:mcp-command', { path: `/api/mcp/${connection.id}`, body: { id: randomUUID(), revision: connection.revision, enabled: false } }, false],
+      ['External access', 'minarbot:mcp-server-command', { path: '/api/mcp-server/peer-tokens', body: { id: randomUUID(), name: 'SET3 lost token', scopes: ['agents:read'] } }, false],
     ]) {
       // Commit on fixture server, then restore metadata as if its acknowledgement was lost.
       await post(command.path, command.body); await workspace(); await page.evaluate(({ storage, command }) => sessionStorage.setItem(storage, JSON.stringify(command)), { storage, command });
@@ -601,7 +601,7 @@ async function settingsConnectionsSmoke(mcpPort) {
       if (section === 'External access') { await visible(dialog.getByText(/Its secret cannot be recovered/)); assert.equal(await page.getByRole('dialog', { name: 'Copy token now', exact: true }).count(), 0); await screenshot('set3-token-irrecoverable'); }
     }
     const command = { path: `/api/projects/${project.id}/environment`, body: { id: randomUUID(), name: 'SET3_RECOVERY', updated: null } };
-    await post(command.path, { ...command.body, value: 'set3-recovery-fixture' }); await workspace(); const storage = `briefsip:project-environment:${project.id}`;
+    await post(command.path, { ...command.body, value: 'set3-recovery-fixture' }); await workspace(); const storage = `minarbot:project-environment:${project.id}`;
     await page.evaluate(({ storage, command }) => sessionStorage.setItem(storage, JSON.stringify(command)), { storage, command }); await projectTab('Environment'); await visible(page.getByText('Not confirmed', { exact: true }));
     await page.getByRole('button', { name: 'Enter value', exact: true }).click(); const editor = page.getByRole('dialog', { name: 'Add variable', exact: true }); assert(await editor.getByRole('button', { name: 'Try again', exact: true }).last().isDisabled()); await editor.getByLabel('Secret value', { exact: true }).fill('set3-recovery-fixture');
     const sent = page.waitForRequest(req => new URL(req.url()).pathname === command.path && req.method() === 'POST'); await editor.getByRole('button', { name: 'Try again', exact: true }).last().click(); const body = (await sent).postDataJSON(); const { value, ...metadata } = body; assert.equal(typeof value, 'string'); assert.deepEqual(metadata, command.body); await hidden(editor);
@@ -731,12 +731,12 @@ async function computerViewerSmoke() {
       assert.equal(await viewer.getByRole('button', { name: 'Pop out', exact: true }).innerText(), '');
       assert((await page.evaluate(() => window.__vncFake.frames)) > 0); await canvas.click(); await page.keyboard.press('a'); assert.equal(await page.evaluate(() => window.__vncFake.input.length), 0, 'Watch view must not send input');
       const originalPixel = await canvas.evaluate(element => [...element.getContext('2d').getImageData(0, 0, 1, 1).data]);
-      for (const palette of ['briefsip', 'github', 'catppuccin', 'everforest', 'solarized', 'midnight']) for (const theme of ['dark', 'light']) {
+      for (const palette of ['minarbot', 'github', 'catppuccin', 'everforest', 'solarized', 'midnight']) for (const theme of ['dark', 'light']) {
         await page.evaluate(({ palette, theme }) => { document.documentElement.dataset.colorTheme = palette; document.documentElement.dataset.theme = theme; }, { palette, theme });
         assert.deepEqual(await canvas.evaluate(element => [...element.getContext('2d').getImageData(0, 0, 1, 1).data]), originalPixel, 'Palette recolored VNC pixels');
         await screenshot(`vnc-watch-${palette}-${theme}`);
       }
-      await page.evaluate(() => { document.documentElement.dataset.colorTheme = 'briefsip'; });
+      await page.evaluate(() => { document.documentElement.dataset.colorTheme = 'minarbot'; });
       await viewer.getByRole('button', { name: 'Take control', exact: true }).click();
       await page.getByRole('alertdialog').getByRole('button', { name: 'Take control', exact: true }).click();
       await visible(viewer.getByRole('button', { name: 'Hand back', exact: true })); await visible(canvas);
@@ -827,7 +827,7 @@ try {
   const reservation = createServer();
   const port = await listen(reservation);
   await new Promise(resolve => reservation.close(resolve));
-  data = await mkdtemp(join(process.env.BRIEFSIP_SMOKE_DATA_ROOT ?? join(root, 'app/node_modules'), '.ui-smoke-data-'));
+  data = await mkdtemp(join(process.env.MINARBOT_SMOKE_DATA_ROOT ?? join(root, 'app/node_modules'), '.ui-smoke-data-'));
   gitWorkspace = join(data, 'workspace'); await mkdir(gitWorkspace);
   const localGit = (...args) => execFileSync('git', ['-c', 'core.hooksPath=/dev/null', ...args], { cwd: gitWorkspace, env: { PATH: '/usr/bin:/bin', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0' } });
   localGit('init', '-q', '--initial-branch=main'); localGit('config', 'user.name', 'UI Smoke'); localGit('config', 'user.email', 'ui-smoke@example.test');
@@ -835,28 +835,28 @@ try {
   await writeFile(join(gitWorkspace, 'notes.txt'), 'Updated first line\nShared context\n--New dash line\n++New plus line\n' + 'Long diff line '.repeat(100) + '\n');
   await writeFile(join(gitWorkspace, 'draft.txt'), 'Untracked draft\n');
   await writeFile(join(gitWorkspace, 'fixture.html'), '<!doctype html><title>Preview fixture</title><h1>Synthetic preview</h1>');
-  const env = Object.fromEntries(['PATH', 'HOME', 'LANG', 'TZ', 'TMPDIR', 'BRIEFSIP_TEST_SERVER', 'BRIEFSIP_RUST_BINARY'].filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]));
+  const env = Object.fromEntries(['PATH', 'HOME', 'LANG', 'TZ', 'TMPDIR', 'MINARBOT_TEST_SERVER', 'MINARBOT_RUST_BINARY'].filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]));
   if (interrupted) throw new Error(`Interrupted by ${interrupted}`);
   app = spawn(process.execPath, ['--experimental-strip-types', 'app/test-support/ui-smoke/machines-fixture.mjs'], {
-    cwd: root, env: { ...env, PORT: String(port), BRIEFSIP_DATA_DIR: data, BRIEFSIP_PROJECT_ROOT: join(output, 'project-folders'), BRIEFSIP_WORKSPACES: JSON.stringify([{ agent: gitAgent, directory: gitWorkspace, write: true }]), BRIEFSIP_PROVIDER: 'openai-compatible', OPENAI_BASE_URL: `http://127.0.0.1:${providerPort}/v1`, OPENAI_API_KEY: 'ui-smoke-fake-key', OPENAI_MODEL: models[0] },
+    cwd: root, env: { ...env, PORT: String(port), MINARBOT_DATA_DIR: data, MINARBOT_PROJECT_ROOT: join(output, 'project-folders'), MINARBOT_WORKSPACES: JSON.stringify([{ agent: gitAgent, directory: gitWorkspace, write: true }]), MINARBOT_PROVIDER: 'openai-compatible', OPENAI_BASE_URL: `http://127.0.0.1:${providerPort}/v1`, OPENAI_API_KEY: 'ui-smoke-fake-key', OPENAI_MODEL: models[0] },
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
   app.stderr.on('data', chunk => { appLog += chunk; });
   origin = await new Promise((resolve, reject) => {
-    const startupTimeout = Number(process.env.BRIEFSIP_SMOKE_STARTUP_TIMEOUT_MS ?? 30_000);
+    const startupTimeout = Number(process.env.MINARBOT_SMOKE_STARTUP_TIMEOUT_MS ?? 30_000);
     const timer = setTimeout(() => reject(new Error(`App did not print its origin within ${startupTimeout}ms.\n${appLog}`)), startupTimeout);
     const done = (error, value) => { clearTimeout(timer); error ? reject(error) : resolve(value); };
     app.once('error', error => done(error));
     app.once('exit', (code, signal) => done(new Error(`App exited before startup (${code ?? signal}).\n${appLog}`)));
     app.stdout.on('data', chunk => {
       appLog += chunk;
-      const match = /^Briefsip: (http:\/\/127\.0\.0\.1:\d+)$/m.exec(appLog);
+      const match = /^Minarbot: (http:\/\/127\.0\.0\.1:\d+)$/m.exec(appLog);
       if (match) done(null, match[1]);
     });
   });
   assert.equal(origin, `http://127.0.0.1:${port}`, 'App printed an unexpected origin');
   receipt.origin = origin;
-  if (process.env.BRIEFSIP_SMOKE_PROFILE_ONLY === '1' || process.env.BRIEFSIP_SMOKE_SB1_ONLY === '1') console.log(`Fixture: ${origin}`);
+  if (process.env.MINARBOT_SMOKE_PROFILE_ONLY === '1' || process.env.MINARBOT_SMOKE_SB1_ONLY === '1') console.log(`Fixture: ${origin}`);
   // Short descriptor path keeps Chrome Unix sockets below 108 bytes, inside this worktree.
   browserScratch = await open(output, 'r');
   process.env.TMPDIR = `/proc/${process.pid}/fd/${browserScratch.fd}`;
@@ -931,13 +931,13 @@ try {
   page.on('response', response => { if (new URL(response.url()).pathname.startsWith('/api/') && response.status() >= 500) receipt.failedRequests.push({ check: activeCheck, url: response.url(), method: response.request().method(), status: response.status(), atMs: Date.now() - started }); });
   receipt.timings.startupMs = Date.now() - started;
 
-  if (process.env.BRIEFSIP_SMOKE_NC1_ONLY === '1') {
+  if (process.env.MINARBOT_SMOKE_NC1_ONLY === '1') {
     await page.request.post(origin + '/api/agents', { headers: { Origin: origin }, data: { runtime: 'api', id: gitAgent, name: gitName, model: 'smoke-primary', instructions: 'Synthetic source control.' } });
     await fileOutputPanelSmoke({ page, origin, root, check, gitAgent, gitName, agentChat: async () => {} });
     await selfVerifySmoke({ page, origin, root, check, gitAgent, gitName, gitWorkspace });
     throw new Error('SMOKE_STOP_AFTER');
   }
-  if (process.env.BRIEFSIP_SMOKE_SET3_ONLY === '1') {
+  if (process.env.MINARBOT_SMOKE_SET3_ONLY === '1') {
     await createAgent(lead); await settingsConnectionsSmoke(mcpPort); throw new Error('SMOKE_STOP_AFTER');
   }
   await check('Empty workspace', async () => {
@@ -986,39 +986,39 @@ try {
   await check('Create first agent and open chat', () => createAgent(lead));
   await providersHiddenSmoke({ page, check, origin, root, settings, workspace, lead });
   await copySettingsSmoke({ check, page, origin, root, openNew, settings, workspace, agentChat });
-  if (process.env.BRIEFSIP_SMOKE_UXD_ONLY === '1') throw new Error('SMOKE_STOP_AFTER');
-  if (process.env.BRIEFSIP_SMOKE_DELETE_ONLY === '1') { await deleteAgentSmoke({ page, check, origin, root, receipt }); throw new Error('SMOKE_STOP_AFTER'); }
-  if (process.env.BRIEFSIP_SMOKE_HRC_ONLY === '1') { await roomControlsSmoke({ check, page, origin, screenshot, visible, hidden, agentChat, release: model => hrcGates.get(model)?.() }); throw new Error('SMOKE_STOP_AFTER'); }
-  if (process.env.BRIEFSIP_SMOKE_MM1_ONLY === '1') { await timelineMinimapSmoke({ check, page, origin, root, agentChat }); throw new Error('SMOKE_STOP_AFTER'); }
-  if (process.env.BRIEFSIP_SMOKE_TY1_ONLY === '1') {
+  if (process.env.MINARBOT_SMOKE_UXD_ONLY === '1') throw new Error('SMOKE_STOP_AFTER');
+  if (process.env.MINARBOT_SMOKE_DELETE_ONLY === '1') { await deleteAgentSmoke({ page, check, origin, root, receipt }); throw new Error('SMOKE_STOP_AFTER'); }
+  if (process.env.MINARBOT_SMOKE_HRC_ONLY === '1') { await roomControlsSmoke({ check, page, origin, screenshot, visible, hidden, agentChat, release: model => hrcGates.get(model)?.() }); throw new Error('SMOKE_STOP_AFTER'); }
+  if (process.env.MINARBOT_SMOKE_MM1_ONLY === '1') { await timelineMinimapSmoke({ check, page, origin, root, agentChat }); throw new Error('SMOKE_STOP_AFTER'); }
+  if (process.env.MINARBOT_SMOKE_TY1_ONLY === '1') {
     console.log(`Fixture: ${origin}`);
-    await typographySmoke({ page, check, origin, agentChat, sidebarTab, send, root, baseline: process.env.BRIEFSIP_SMOKE_TY1_BASELINE === '1' });
+    await typographySmoke({ page, check, origin, agentChat, sidebarTab, send, root, baseline: process.env.MINARBOT_SMOKE_TY1_BASELINE === '1' });
     throw new Error('SMOKE_STOP_AFTER');
   }
-  if (process.env.BRIEFSIP_SMOKE_R5B_ONLY === '1') { await r5PanelSmoke({ check, page, origin, root, agentChat, settings, openNew, gitAgent, gitName }); throw new Error('SMOKE_STOP_AFTER'); }
-  if (process.env.BRIEFSIP_SMOKE_UXC_ONLY === '1') { await rightPanelUXSmoke({ check, page, origin, root, agentChat }); await widePanelsSmoke({ check, page, agentChat, settings, visible, hidden, screenshot, viewport: receipt.viewport }); throw new Error('SMOKE_STOP_AFTER'); }
-  if (process.env.BRIEFSIP_SMOKE_LB1_ONLY === '1') {
-    await detailsDeclutterSmoke({ page, check, origin, screenshot, gitAgent, gitName, models, baseline: process.env.BRIEFSIP_SMOKE_LB1_BASELINE === '1' });
+  if (process.env.MINARBOT_SMOKE_R5B_ONLY === '1') { await r5PanelSmoke({ check, page, origin, root, agentChat, settings, openNew, gitAgent, gitName }); throw new Error('SMOKE_STOP_AFTER'); }
+  if (process.env.MINARBOT_SMOKE_UXC_ONLY === '1') { await rightPanelUXSmoke({ check, page, origin, root, agentChat }); await widePanelsSmoke({ check, page, agentChat, settings, visible, hidden, screenshot, viewport: receipt.viewport }); throw new Error('SMOKE_STOP_AFTER'); }
+  if (process.env.MINARBOT_SMOKE_LB1_ONLY === '1') {
+    await detailsDeclutterSmoke({ page, check, origin, screenshot, gitAgent, gitName, models, baseline: process.env.MINARBOT_SMOKE_LB1_BASELINE === '1' });
     throw new Error('SMOKE_STOP_AFTER');
   }
-  if (process.env.BRIEFSIP_SMOKE_SB1_ONLY === '1') {
+  if (process.env.MINARBOT_SMOKE_SB1_ONLY === '1') {
     await createAgent(helper);
     const response = await page.request.post(origin + '/api/projects', { headers: { Origin: origin }, data: { id: randomUUID(), name: projectName, members: [] } });
     assert(response.ok());
     await page.reload(); await workspace();
-    await sidebarSpacingSmoke({ page, check, sidebarTab, screenshot, projectName, baseline: process.env.BRIEFSIP_SMOKE_SB1_BASELINE === '1' });
+    await sidebarSpacingSmoke({ page, check, sidebarTab, screenshot, projectName, baseline: process.env.MINARBOT_SMOKE_SB1_BASELINE === '1' });
     throw new Error('SMOKE_STOP_AFTER');
   }
-  if (process.env.BRIEFSIP_SMOKE_ST1_ONLY === '1') {
+  if (process.env.MINARBOT_SMOKE_ST1_ONLY === '1') {
     await streamActionsSmoke({ check, page, origin, screenshot, releaseStream, releaseRoom, releaseRoomDelivery, streamReply: 'Stable first block.\n\nGrowing second block' + streamReply.slice('Stable first block.\n\n'.length), agentChat, visible, hidden });
     throw new Error('SMOKE_STOP_AFTER');
   }
   await attachmentSmoke({ check, page, context, origin, agentChat, screenshot, viewport: receipt.viewport });
-  if (process.env.BRIEFSIP_SMOKE_AT1_ONLY === '1') throw new Error('SMOKE_STOP_AFTER');
-  if (process.env.BRIEFSIP_SMOKE_RS1_ONLY === '1') { await widePanelsSmoke({ check, page, agentChat, settings, visible, hidden, screenshot, viewport: receipt.viewport }); throw new Error('SMOKE_STOP_AFTER'); }
-  if (process.env.BRIEFSIP_SMOKE_SETTINGS_DATA_ONLY === '1') { await settingsDataSmoke(); throw new Error('SMOKE_STOP_AFTER'); }
-  if (process.env.BRIEFSIP_SMOKE_COMPUTER_ONLY === '1') { await computerViewerSmoke(); throw new Error('SMOKE_STOP_AFTER'); }
-  if (process.env.BRIEFSIP_SMOKE_DESKTOP_ONLY === '1') {
+  if (process.env.MINARBOT_SMOKE_AT1_ONLY === '1') throw new Error('SMOKE_STOP_AFTER');
+  if (process.env.MINARBOT_SMOKE_RS1_ONLY === '1') { await widePanelsSmoke({ check, page, agentChat, settings, visible, hidden, screenshot, viewport: receipt.viewport }); throw new Error('SMOKE_STOP_AFTER'); }
+  if (process.env.MINARBOT_SMOKE_SETTINGS_DATA_ONLY === '1') { await settingsDataSmoke(); throw new Error('SMOKE_STOP_AFTER'); }
+  if (process.env.MINARBOT_SMOKE_COMPUTER_ONLY === '1') { await computerViewerSmoke(); throw new Error('SMOKE_STOP_AFTER'); }
+  if (process.env.MINARBOT_SMOKE_DESKTOP_ONLY === '1') {
     await desktopViewSmoke({ check, context, page, lead, agentChat, visible, hidden, screenshot, captureComputerThemes, viewport: receipt.viewport });
     throw new Error('SMOKE_STOP_AFTER');
   }
@@ -1090,7 +1090,7 @@ try {
     await dialog.locator('[role=tab][aria-selected=true]').filter({ hasText: /^Model$/ }).waitFor();
     for (const viewport of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }]) {
       await page.setViewportSize(viewport);
-      for (const [palette, theme] of [['briefsip', 'dark'], ['briefsip', 'light'], ['catppuccin', 'dark']]) {
+      for (const [palette, theme] of [['minarbot', 'dark'], ['minarbot', 'light'], ['catppuccin', 'dark']]) {
         await page.evaluate(({ palette, theme }) => { document.documentElement.dataset.colorTheme = palette; document.documentElement.dataset.theme = theme; }, { palette, theme });
         for (const name of ['Profile', 'Model', 'Advanced']) {
           await dialog.getByRole('tab', { name, exact: true }).click();
@@ -1111,7 +1111,7 @@ try {
       }
     }
     await page.evaluate(() => { document.documentElement.dataset.textSize = 'standard'; });
-    await page.setViewportSize(receipt.viewport); await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; document.documentElement.dataset.colorTheme = 'briefsip'; });
+    await page.setViewportSize(receipt.viewport); await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; document.documentElement.dataset.colorTheme = 'minarbot'; });
     await dialog.getByRole('tab', { name: 'Profile', exact: true }).click();
     await dialog.getByLabel('Role', { exact: false }).fill('Staged role');
     await dialog.getByRole('button', { name: 'Change', exact: true }).click();
@@ -1147,7 +1147,7 @@ try {
       assert.equal(commands.length, 0); await focusRestored(hide);
       await hide.click(); await confirmation.getByRole('button', { name: 'Hide agent', exact: true }).click();
       const retry = dialog.getByRole('button', { name: 'Try again', exact: true }); await visible(retry);
-      const stored = await page.evaluate(() => Object.entries(sessionStorage).find(([key]) => key.startsWith('briefsip-visibility:')));
+      const stored = await page.evaluate(() => Object.entries(sessionStorage).find(([key]) => key.startsWith('minarbot-visibility:')));
       assert.deepEqual(JSON.parse(stored[1]), commands[0]); assert.equal(commands[0].hidden, true);
       await retry.click(); const restore = dialog.getByRole('button', { name: 'Restore agent', exact: true }); await visible(restore); assert.deepEqual(commands[1], commands[0]);
       await visible(dialog.getByText('Hidden · queue paused', { exact: true }));
@@ -1324,11 +1324,11 @@ try {
       await avatar.getByRole('radio', { name: 'Pebble', exact: true }).click(); await avatar.getByRole('button', { name: 'Save', exact: true }).click();
       const retry = avatar.getByRole('button', { name: 'Try again', exact: true }); await visible(retry);
       assert.equal(commands[0].revision, 0); assert.match(commands[0].image, /^iVBOR/); assert.deepEqual(Object.keys(commands[0]).sort(), ['id', 'image', 'revision']);
-      const stored = await page.evaluate(() => Object.entries(sessionStorage).find(([key]) => key.startsWith('briefsip-avatar:'))); assert.deepEqual(JSON.parse(stored[1]), commands[0]);
+      const stored = await page.evaluate(() => Object.entries(sessionStorage).find(([key]) => key.startsWith('minarbot-avatar:'))); assert.deepEqual(JSON.parse(stored[1]), commands[0]);
       await screenshot('set2-avatar-recovery'); await retry.click(); await visible(avatar.getByText('Avatar updated.', { exact: true })); assert.deepEqual(commands[1], commands[0]);
       const remove = avatar.getByRole('button', { name: 'Remove avatar', exact: true }); await remove.click();
       const confirmation = page.getByRole('alertdialog', { name: 'Remove avatar?', exact: true }); await visible(confirmation); await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click(); await hidden(confirmation); await focusRestored(remove); assert.equal(commands.length, 2);
-      await remove.click(); await confirmation.getByRole('button', { name: 'Remove avatar', exact: true }).click(); await page.waitForFunction(() => !Object.keys(sessionStorage).some(key => key.startsWith('briefsip-avatar:')));
+      await remove.click(); await confirmation.getByRole('button', { name: 'Remove avatar', exact: true }).click(); await page.waitForFunction(() => !Object.keys(sessionStorage).some(key => key.startsWith('minarbot-avatar:')));
       assert.equal(commands[2].revision, 1); assert.equal(commands[2].image, null);
       await avatar.getByRole('button', { name: 'Done', exact: true }).click(); await hidden(avatar); await focusRestored(dialog.getByRole('button', { name: 'Change', exact: true }));
       assert.equal(await dialog.getByLabel('Name', { exact: true }).inputValue(), 'Unsaved name');
@@ -1370,7 +1370,7 @@ try {
     await page.keyboard.press('Escape'); await hidden(exported);
     await details.getByRole('tab', { name: 'Chats', exact: true }).click();
   });
-  if (process.env.BRIEFSIP_SMOKE_PROFILE_ONLY === '1') throw new Error('SMOKE_STOP_AFTER');
+  if (process.env.MINARBOT_SMOKE_PROFILE_ONLY === '1') throw new Error('SMOKE_STOP_AFTER');
   await check('Enter sends direct message and completes Markdown reply', async () => { await agentChat(); await send(lead, 'Direct smoke message'); });
   await timelineMinimapSmoke({ check, page, origin, root, agentChat });
   await acpRuntimeSmoke({ page, check, origin, root, agentChat });
@@ -1383,7 +1383,7 @@ try {
   await agentChat();
   await check('Voice defaults off: no reply controls or inline picker', async () => {
     await agentChat();
-    assert.equal(await page.evaluate(() => localStorage.getItem('briefsip.speech.enabled.v1')), null);
+    assert.equal(await page.evaluate(() => localStorage.getItem('minarbot.speech.enabled.v1')), null);
     assert.equal(await page.getByRole('button', { name: 'Listen', exact: true }).count(), 0);
     assert.equal(await page.getByRole('button', { name: 'Listen to answer', exact: true }).count(), 0);
     assert.equal(await page.getByRole('combobox', { name: 'Voice', exact: true }).count(), 0);
@@ -1396,7 +1396,7 @@ try {
       await visible(sibling.getByRole('main', { name: `Conversation ${lead}`, exact: true }).getByText('Smoke reply:', { exact: false }));
       assert.equal(await sibling.getByRole('button', { name: 'Listen', exact: true }).count(), 0);
       // Keep original saved-voice format; enabling must retain it.
-      await sibling.evaluate(() => localStorage.setItem('briefsip.speech.voice.v1', JSON.stringify(['smoke-local', 'Smoke local voice', 'en-US'])));
+      await sibling.evaluate(() => localStorage.setItem('minarbot.speech.voice.v1', JSON.stringify(['smoke-local', 'Smoke local voice', 'en-US'])));
       const panel = await settings('General');
       const toggle = panel.getByRole('switch', { name: 'Read aloud', exact: true });
       assert.equal(await toggle.getAttribute('aria-checked'), 'false');
@@ -1444,12 +1444,12 @@ try {
     const sibling = await page.context().newPage();
     try {
       await sibling.goto(origin);
-      await sibling.evaluate(() => localStorage.removeItem('briefsip.speech.voice.v1'));
-      await page.waitForFunction(() => localStorage.getItem('briefsip.speech.voice.v1') === null);
+      await sibling.evaluate(() => localStorage.removeItem('minarbot.speech.voice.v1'));
+      await page.waitForFunction(() => localStorage.getItem('minarbot.speech.voice.v1') === null);
       const listen = page.getByRole('button', { name: 'Listen', exact: true }); await listen.click();
       await visible(page.getByText('Pick a voice in Settings > General.', { exact: true }));
       assert.equal(await page.getByRole('combobox', { name: 'Voice', exact: true }).count(), 0);
-      await sibling.evaluate(() => localStorage.setItem('briefsip.speech.voice.v1', JSON.stringify(['smoke-local', 'Smoke local voice', 'en-US'])));
+      await sibling.evaluate(() => localStorage.setItem('minarbot.speech.voice.v1', JSON.stringify(['smoke-local', 'Smoke local voice', 'en-US'])));
       await hidden(page.getByText('Pick a voice in Settings > General.', { exact: true }));
       await page.evaluate(() => { window.__speechSmoke.fail = true; }); await listen.click();
       await visible(page.getByText('Reading stopped. Check device audio and try again.', { exact: true }));
@@ -1457,7 +1457,7 @@ try {
       await page.evaluate(() => { window.__speechSmoke.fail = false; }); await listen.click();
       await visible(page.getByRole('button', { name: 'Stop', exact: true }));
       const cancels = await page.evaluate(() => window.__speechSmoke.cancelled);
-      await sibling.evaluate(() => localStorage.setItem('briefsip.speech.enabled.v1', 'false'));
+      await sibling.evaluate(() => localStorage.setItem('minarbot.speech.enabled.v1', 'false'));
       await hidden(page.locator('.speech-playback'));
       assert(await page.evaluate(previous => window.__speechSmoke.cancelled > previous, cancels));
     } finally { await sibling.close(); }
@@ -1582,7 +1582,7 @@ try {
     }
   });
   await check('Color themes: six palettes, two modes, System updates, cross-tab sync and screenshots', async () => {
-    const themes = ['Briefsip', 'GitHub', 'Catppuccin', 'Everforest', 'Solarized', 'Midnight'];
+    const themes = ['Minarbot', 'GitHub', 'Catppuccin', 'Everforest', 'Solarized', 'Midnight'];
     receipt.themeTokens = [];
     for (const mode of ['dark', 'light']) {
       for (const theme of themes) {
@@ -1625,8 +1625,8 @@ try {
     try {
       await sibling.goto(origin);
       await sibling.waitForFunction(() => document.documentElement.dataset.colorTheme === 'midnight');
-      await appearance.getByRole('button', { name: 'Briefsip', exact: true }).click();
-      await sibling.waitForFunction(() => document.documentElement.dataset.colorTheme === 'briefsip');
+      await appearance.getByRole('button', { name: 'Minarbot', exact: true }).click();
+      await sibling.waitForFunction(() => document.documentElement.dataset.colorTheme === 'minarbot');
     } finally { await sibling.close(); }
     await appearance.getByRole('radio', { name: 'Dark', exact: true }).click();
     await appearance.getByRole('button', { name: 'Close settings', exact: true }).click();
@@ -1661,7 +1661,7 @@ try {
       } else { assert.equal(await content.getByRole('switch').count(), 0); assert.equal(await content.locator('.color-theme-card').count(), 6); }
       for (const viewport of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }]) {
         await page.setViewportSize(viewport);
-        for (const [palette, theme] of [['briefsip', 'dark'], ['briefsip', 'light'], ['catppuccin', 'dark']]) {
+        for (const [palette, theme] of [['minarbot', 'dark'], ['minarbot', 'light'], ['catppuccin', 'dark']]) {
           await page.evaluate(({ palette, theme }) => { document.documentElement.dataset.colorTheme = palette; document.documentElement.dataset.theme = theme; }, { palette, theme });
           const bounds = await dialog.locator('.app-settings__nav').boundingBox(); assert.equal(bounds.width, 240);
           assert(await content.evaluate(el => el.scrollWidth <= el.clientWidth + 1));
@@ -1717,7 +1717,7 @@ try {
     await sidebarTab('Projects'); await page.reload();
     await page.getByRole('heading', { name: 'Routines', exact: true }).waitFor();
     assert.equal(await sidebar.getByRole('tab', { name: /^Projects/ }).getAttribute('aria-selected'), 'true');
-    assert.equal(await page.evaluate(() => localStorage.getItem('briefsip:sidebar-tab')), 'projects');
+    assert.equal(await page.evaluate(() => localStorage.getItem('minarbot:sidebar-tab')), 'projects');
     await hidden(sidebar.getByRole('button', { name: 'Filter sidebar', exact: true }));
     await page.getByRole('textbox', { name: 'Search projects', exact: true }).fill('Migrated');
     await visible(sidebar.getByRole('button', { name: 'Migrated chatroom', exact: true }));
@@ -1869,7 +1869,7 @@ try {
       for (const theme of ['dark', 'light']) {
         const appearance = await settings('Appearance'); await appearance.getByRole('radio', { name: theme === 'dark' ? 'Dark' : 'Light', exact: true }).click();
         const settingsDialog = await settings('Updates');
-        await visible(settingsDialog.getByText('Briefsip 0.2.0', { exact: true }));
+        await visible(settingsDialog.getByText('Minarbot 0.2.0', { exact: true }));
         await visible(settingsDialog.getByText('2 running turns', { exact: true }));
         await screenshot(`settings-updates-${theme}`);
         await settingsDialog.getByRole('button', { name: 'Update now', exact: true }).click();
@@ -1898,7 +1898,7 @@ try {
     for (const theme of ['dark','light']) {
       await settings('Appearance'); await page.getByRole('radio',{name:theme === 'dark'?'Dark':'Light',exact:true}).click();
       const panel=await settings('Machines'), trigger=panel.getByRole('button',{name:'Add machine',exact:true});
-      await trigger.click(); await page.getByRole('menuitem',{name:'Install Briefsip',exact:true}).click(); const dialog=page.getByRole('dialog',{name:'Install Briefsip',exact:true}); await visible(dialog);
+      await trigger.click(); await page.getByRole('menuitem',{name:'Install Minarbot',exact:true}).click(); const dialog=page.getByRole('dialog',{name:'Install Minarbot',exact:true}); await visible(dialog);
       await visible(dialog.getByText('Linux · Requirements',{exact:true}));
       await dialog.getByRole('button',{name:'Create install command',exact:true}).click();
       const command=dialog.getByRole('textbox',{name:'Install command',exact:true});await visible(command);
@@ -1908,11 +1908,11 @@ try {
       for (const key of ['Tab','Shift+Tab']) {await page.keyboard.press(key);assert(await dialog.evaluate(el=>el.contains(document.activeElement)), 'Install dialog must trap focus');}
       await screenshot(`add-machine-${theme}`); await cleanPage(dialog);
       await page.keyboard.press('Escape'); await hidden(dialog); await focusRestored(trigger);
-      await trigger.click();await page.getByRole('menuitem',{name:'Install Briefsip',exact:true}).click();await hidden(page.getByRole('textbox',{name:'Install command',exact:true}));await page.keyboard.press('Escape');
+      await trigger.click();await page.getByRole('menuitem',{name:'Install Minarbot',exact:true}).click();await hidden(page.getByRole('textbox',{name:'Install command',exact:true}));await page.keyboard.press('Escape');
     }
     // Drive the 30-minute boundary without waiting in real time.
-    const panel=await settings('Machines');await panel.getByRole('button',{name:'Add machine',exact:true}).click();await page.getByRole('menuitem',{name:'Install Briefsip',exact:true}).click();
-    const dialog=page.getByRole('dialog',{name:'Install Briefsip',exact:true});
+    const panel=await settings('Machines');await panel.getByRole('button',{name:'Add machine',exact:true}).click();await page.getByRole('menuitem',{name:'Install Minarbot',exact:true}).click();
+    const dialog=page.getByRole('dialog',{name:'Install Minarbot',exact:true});
     await dialog.getByRole('button',{name:'Create install command',exact:true}).click();await visible(dialog.getByRole('textbox',{name:'Install command',exact:true}));
     await page.evaluate(()=>{window.__installerDateNow=Date.now;Date.now=()=>window.__installerDateNow()+31*60_000;});
     try {await visible(dialog.getByText('This install command expired. Create a new one to continue.',{exact:true}));await hidden(dialog.getByRole('textbox',{name:'Install command',exact:true}));}
@@ -2331,7 +2331,7 @@ try {
     const persistedPalette = await page.evaluate(() => ({ theme: document.documentElement.dataset.colorTheme, brand: getComputedStyle(document.documentElement).getPropertyValue('--color-brand') }));
     assert.equal(persistedPalette.theme, 'github', 'Theme choice did not persist after reload');
     assert.equal(persistedPalette.brand, afterPalette.brand, 'Persisted palette token changed after reload');
-    const restored = await settings('Appearance'); await restored.getByRole('button', { name: 'Briefsip', exact: true }).click();
+    const restored = await settings('Appearance'); await restored.getByRole('button', { name: 'Minarbot', exact: true }).click();
     return `Theme light; palette ${beforePalette.theme} -> ${afterPalette.theme}; persisted after reload.`;
   });
   await check('Sidebar: Routines', async () => {
@@ -2382,7 +2382,7 @@ try {
     const post = async (path, body) => { const response = await fetch(origin + path, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const value = await response.json(); assert(response.ok, JSON.stringify(value)); return value; };
     const directory = await fetch(origin + '/api/agents').then(response => response.json());
     const target = directory.agents.find(agent => agent.name === helper);
-    const peer = await post('/api/mcp-server/peer-tokens', { id: randomUUID(), name: 'Briefsip: omarchy', scopes: ['agents:message'] });
+    const peer = await post('/api/mcp-server/peer-tokens', { id: randomUUID(), name: 'Minarbot: omarchy', scopes: ['agents:message'] });
     const response = await fetch(origin + '/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', Authorization: `Bearer ${peer.token}` }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'send_message', arguments: { requestId: randomUUID(), recipient: target.id, text: 'Inspect cross-machine release notes' } } }) });
     const delivery = await response.json(); assert(response.ok && !delivery.result?.isError, JSON.stringify(delivery));
     await workspace(); await page.getByRole('navigation', { name: 'Choose agent', exact: true }).getByRole('button', { name: new RegExp(`^${helper} `) }).click();
@@ -2391,7 +2391,7 @@ try {
     const details = page.getByRole('complementary', { name: 'Conversation details', exact: true }); await details.getByRole('tab', { name: 'Chats', exact: true }).click();
     const group = details.getByRole('button', { name: /^From other agents/ }); await visible(group); assert.equal(await group.getAttribute('aria-expanded'), 'false'); await group.click();
     await visible(details.getByRole('button', { name: `${lead} asked: Delegated smoke`, exact: true }));
-    const peerName = 'Briefsip on omarchy: Inspect cross-machine release notes'; await visible(details.getByRole('button', { name: peerName, exact: true }));
+    const peerName = 'Minarbot on omarchy: Inspect cross-machine release notes'; await visible(details.getByRole('button', { name: peerName, exact: true }));
     const peerMenu = details.getByRole('button', { name: `Menu conversation ${peerName}`, exact: true });
     for (const theme of ['dark', 'light']) {
       await page.evaluate(theme => document.documentElement.dataset.theme = theme, theme); await peerMenu.click();
@@ -2433,7 +2433,7 @@ try {
     await hidden(details.getByRole('button', { name: 'Workspace files', exact: true }));
     await hidden(details.getByRole('region', { name: 'Source control', exact: true }));
     const directory = await fetch(origin + '/api/agents').then(response => response.json());
-    const key = `briefsip:right-panel:${directory.agents.find(agent => agent.name === lead).id}`;
+    const key = `minarbot:right-panel:${directory.agents.find(agent => agent.name === lead).id}`;
     assert.equal(await page.evaluate(key => localStorage.getItem(key), key), '"files"', 'Selected tab was not persisted');
     await page.evaluate(key => localStorage.setItem(key, 'invalid'), key);
     await page.reload();
@@ -2472,7 +2472,7 @@ try {
     await page.reload();
     await visible(details);
     assert.equal(await details.getByRole('separator', { name: 'Resize details', exact: true }).getAttribute('aria-valuenow'), '296');
-    await page.evaluate(() => { for (const key of Object.keys(localStorage)) if (key.startsWith('briefsip:right-panel-width:')) localStorage.setItem(key, '360'); }); await page.reload();
+    await page.evaluate(() => { for (const key of Object.keys(localStorage)) if (key.startsWith('minarbot:right-panel-width:')) localStorage.setItem(key, '360'); }); await page.reload();
   });
   await widePanelsSmoke({ check, page, agentChat, settings, visible, hidden, screenshot, viewport: receipt.viewport });
   await check('Chats search, Files attachment shortcut, and section memory', async () => {
@@ -2626,7 +2626,7 @@ try {
     await page.getByRole('tab', { name: 'Flow', exact: true }).click(); await visible(page.getByRole('heading', { name: 'Agent flow', exact: true }));
     await routineSelect(page, 'To agent', helper); await page.getByRole('button', { name: 'Connect', exact: true }).click();
     await page.getByRole('button', { name: 'Save flow', exact: true }).click();
-    await page.waitForFunction(() => !Object.keys(sessionStorage).some(key => key.startsWith('briefsip:flow:')));
+    await page.waitForFunction(() => !Object.keys(sessionStorage).some(key => key.startsWith('minarbot:flow:')));
     await page.getByRole('button', { name: 'Reload flow', exact: true }).click();
     await visible(page.getByText(`${lead} to ${helper}`, { exact: true })); await routineThemes('flow');
     await page.getByRole('button', { name: 'All routines', exact: true }).click();
@@ -2927,10 +2927,10 @@ try {
       assert(await diff.evaluate(el => el.scrollWidth > el.clientWidth), 'Unwrapped code lines must scroll inside diff');
       await details.getByRole('button', { name: 'Wrap lines', exact: true }).click();
       assert(await details.evaluate(el => el.scrollWidth <= el.clientWidth + 1), 'Diff overflow escaped panel');
-      for (const palette of ['briefsip', 'github', 'catppuccin', 'everforest', 'solarized', 'midnight']) {
+      for (const palette of ['minarbot', 'github', 'catppuccin', 'everforest', 'solarized', 'midnight']) {
         await page.evaluate(palette => { document.documentElement.dataset.colorTheme = palette; }, palette); await screenshot(`source-control-diff-${palette}-${theme}`);
       }
-      await page.evaluate(() => { document.documentElement.dataset.colorTheme = 'briefsip'; });
+      await page.evaluate(() => { document.documentElement.dataset.colorTheme = 'minarbot'; });
       await screenshot(`source-control-diff-${theme}`);
       await tabs.getByRole('tab', { name: 'Chats', exact: true }).click();
       await page.getByRole('complementary', { name: 'Conversation details', exact: true }).getByRole('tab', { name: 'Files', exact: true }).click();
@@ -2974,12 +2974,12 @@ try {
     await page.reload(); await openThread(); await visible(details.getByRole('region', { name: 'Unified diff', exact: true }));
     for (const viewport of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }]) {
       await page.setViewportSize(viewport);
-      for (const [palette, theme] of [['briefsip', 'dark'], ['briefsip', 'light'], ['catppuccin', 'dark']]) {
+      for (const [palette, theme] of [['minarbot', 'dark'], ['minarbot', 'light'], ['catppuccin', 'dark']]) {
         await page.evaluate(({ palette, theme }) => Object.assign(document.documentElement.dataset, { colorTheme: palette, theme }), { palette, theme });
         for (const name of [/^Source control/, 'Preview artifacts']) { await surface(name); if (name === 'Preview artifacts') await visible(details.frameLocator('iframe').getByRole('heading', { name: 'RP1 preview', exact: true })); else await visible(details.getByRole('region', { name: 'Unified diff', exact: true })); assert.equal(await tabs.getByRole('tab').count(), 2); assert(await details.evaluate(el => el.scrollWidth <= el.clientWidth + 1)); await screenshot(`rp1-${String(name)}-${palette}-${theme}-${viewport.width}`); }
       }
     }
-    await page.setViewportSize(receipt.viewport); await page.evaluate(() => Object.assign(document.documentElement.dataset, { colorTheme: 'briefsip', theme: 'dark' }));
+    await page.setViewportSize(receipt.viewport); await page.evaluate(() => Object.assign(document.documentElement.dataset, { colorTheme: 'minarbot', theme: 'dark' }));
     await details.getByRole('tab', { name: 'Chats', exact: true }).click(); await cleanPage();
   });
   await r5PanelSmoke({ check, page, origin, root, agentChat, settings, openNew, gitAgent, gitName, reviewer: quiet });

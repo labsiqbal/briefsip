@@ -24,7 +24,7 @@ const temp = () => mkdtempSync(join(tmpdir(),'updates-'));
 async function until<T>(read:()=>Promise<T|undefined|false>, timeout=15000):Promise<T> { const deadline=Date.now()+timeout; while(Date.now()<deadline){const result=await read();if(result)return result;await delay(80);}throw new Error('Update test timed out.'); }
 async function freePort() { const s=httpServer(); await new Promise<void>(r=>s.listen(0,'127.0.0.1',r)); const addr=s.address();assert(addr&&typeof addr!=='string');const p=addr.port;await new Promise<void>(r=>s.close(()=>r()));return p; }
 function fixture(source:string, version:string, mode='healthy') {
-  mkdirSync(join(source,'dist'),{recursive:true}); writeFileSync(join(source,'dist/index.html'),'<title>Briefsip fixture</title>');
+  mkdirSync(join(source,'dist'),{recursive:true}); writeFileSync(join(source,'dist/index.html'),'<title>Minarbot fixture</title>');
   writeFileSync(join(source,'package.json'),JSON.stringify({name:'fixture',version,type:'module'}));
   nativeReleaseFixture(source,version,mode);
 }
@@ -52,9 +52,9 @@ async function api(app:{origin:string},path:string,body?:unknown,status=200,head
 async function mockLauncher(dir:string) {mkdirSync(dir,{recursive:true});const socket=join(dir,'control.sock'),commands=new Map<string,string>();const server=netServer(s=>{let buf='';s.on('data',b=>{buf+=b;if(!buf.includes('\n'))return;const q=JSON.parse(buf);if(q.type==='status')s.end(JSON.stringify({protocol:1,current:'development'})+'\n');else{const digest=JSON.stringify([q.target,q.version]),old=commands.get(q.id);if(old&&old!==digest)s.end('{"error":"Request ID was already used."}\n');else{commands.set(q.id,digest);s.end(JSON.stringify({accepted:true,id:q.id})+'\n');}}});});await new Promise<void>(r=>server.listen(socket,r));chmodSync(socket,0o600);return{socket,commands,async close(){if(server.listening)await new Promise<void>(r=>server.close(()=>r()));}};}
 
 test('release builder publishes verified immutable files before feed metadata and refuses dirty trees',async()=>{
- const dir=temp();try{const source=join(dir,'source'),releases=join(dir,'releases');fixture(source,'1.0.0');writeFileSync(join(source,'.env'),'NEVER_COPY_SECRET');const info=buildRelease({source,releases,build:false,install:false,allowDirty:true,notes:'Native check'});assert.equal(verifyRelease(releases,info.id).version,'1.0.0');assert.equal(latestRelease(releases)!.id,info.id);assert(!existsSync(join(releases,info.id,'.env')));assert(Object.keys(info.files).includes('bin/briefsip-server'));assert(!Object.keys(info.files).includes('release.json'));const repository=join(dir,'dirty-repository');mkdirSync(repository);execFileSync('git',['init'],{cwd:repository,stdio:'ignore'});execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','Fixture'],{cwd:repository,stdio:'ignore'});writeFileSync(join(repository,'dirty'),'fixture');assert.throws(()=>buildRelease({source,releases,repository,build:false,install:false}),/dirty/);assert.throws(()=>buildRelease({source,releases,build:false,install:false,allowDirty:true}),/already exists/);assert.equal(latestRelease(releases)!.id,info.id);
+ const dir=temp();try{const source=join(dir,'source'),releases=join(dir,'releases');fixture(source,'1.0.0');writeFileSync(join(source,'.env'),'NEVER_COPY_SECRET');const info=buildRelease({source,releases,build:false,install:false,allowDirty:true,notes:'Native check'});assert.equal(verifyRelease(releases,info.id).version,'1.0.0');assert.equal(latestRelease(releases)!.id,info.id);assert(!existsSync(join(releases,info.id,'.env')));assert(Object.keys(info.files).includes('bin/minarbot-server'));assert(!Object.keys(info.files).includes('release.json'));const repository=join(dir,'dirty-repository');mkdirSync(repository);execFileSync('git',['init'],{cwd:repository,stdio:'ignore'});execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','Fixture'],{cwd:repository,stdio:'ignore'});writeFileSync(join(repository,'dirty'),'fixture');assert.throws(()=>buildRelease({source,releases,repository,build:false,install:false}),/dirty/);assert.throws(()=>buildRelease({source,releases,build:false,install:false,allowDirty:true}),/already exists/);assert.equal(latestRelease(releases)!.id,info.id);
  fixture(source,'1.0.1');symlinkSync('index.html',join(source,'dist/unsafe'));assert.throws(()=>buildRelease({source,releases,build:false,install:false,allowDirty:true}),/unsupported/i);assert.equal(latestRelease(releases)!.id,info.id);assert(!readdirSync(releases).some(name=>name.startsWith('.staging-')));
- writeFileSync(join(releases,info.id,'bin/briefsip-server'),'tampered');assert.throws(()=>verifyRelease(releases,info.id),/SHA-256/);
+ writeFileSync(join(releases,info.id,'bin/minarbot-server'),'tampered');assert.throws(()=>verifyRelease(releases,info.id),/SHA-256/);
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
 
@@ -70,18 +70,20 @@ test('release lint failure stops build, tests and packaging; successful gates ru
 
 test('desktop build follows dirty guard and packages release version without changing tracked desktop version',()=>{
  const dir=temp();try{
- for(const folder of ['app','scripts','desktop/scripts'])mkdirSync(join(dir,folder),{recursive:true});
+ for(const folder of ['app','scripts','desktop/scripts','desktop/src'])mkdirSync(join(dir,folder),{recursive:true});
  cpSync(join(root,'scripts/release.mjs'),join(dir,'scripts/release.mjs'));for(const name of ['install-machine.sh','uninstall-machine.sh'])cpSync(join(root,'scripts',name),join(dir,'scripts',name));cpSync(join(root,'scripts/release-lib.mjs'),join(dir,'scripts/release-lib.mjs'));
+ for(const path of ['scripts/rename-compat.mjs','desktop/src/rename-env.mjs'])cpSync(join(root,path),join(dir,path));
+ const desktopPackage=JSON.parse(readFileSync(join(root,'desktop/package.json'),'utf8'));
  const app={name:'release-fixture',version:'1.0.1',type:'module',scripts:{lint:'node -e "0"',test:'node -e "0"',build:'node -e "0"'}};
  writeFileSync(join(dir,'app/package.json'),JSON.stringify(app));writeFileSync(join(dir,'app/package-lock.json'),JSON.stringify({name:app.name,version:app.version,lockfileVersion:3,packages:{'':app}}));
  nativeReleaseFixture(join(dir,'app'),'1.0.1');mkdirSync(join(dir,'app/dist'));writeFileSync(join(dir,'app/dist/index.html'),'fixture');
- writeFileSync(join(dir,'desktop/package.json'),JSON.stringify({version:'1.0.0'}));writeFileSync(join(dir,'desktop/package-lock.json'),JSON.stringify({version:'1.0.0',packages:{'':{version:'1.0.0'}}}));
- writeFileSync(join(dir,'desktop/scripts/build.mjs'),`import {writeFileSync} from 'node:fs';import {join} from 'node:path';const [version, out] = process.argv.slice(2);const name = 'Briefsip-' + version + '-x86_64.AppImage';writeFileSync(join(out,name),version);writeFileSync(join(out,'latest-linux.yml'),'version: ' + version + '\\npath: ' + name + '\\n');`);
+ writeFileSync(join(dir,'desktop/package.json'),JSON.stringify({...desktopPackage,version:'1.0.0'}));writeFileSync(join(dir,'desktop/package-lock.json'),JSON.stringify({version:'1.0.0',packages:{'':{version:'1.0.0'}}}));
+ writeFileSync(join(dir,'desktop/scripts/build.mjs'),`import {writeFileSync} from 'node:fs';import {join} from 'node:path';const [version, out] = process.argv.slice(2);const name = 'Minarbot-' + version + '-x86_64.AppImage';writeFileSync(join(out,name),version);writeFileSync(join(out,'latest-linux.yml'),'version: ' + version + '\\npath: ' + name + '\\n');`);
  const git=(args:string[])=>execFileSync('git',args,{cwd:dir,stdio:'ignore'});git(['init']);git(['add','.']);git(['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','Fixture']);
  const releases=join(dir,'releases');
  const args=[join(dir,'scripts/release.mjs'),'--desktop','--no-github','--releases',releases];
  writeFileSync(join(dir,'dirty'),'uncommitted');assert.throws(()=>execFileSync(process.execPath,args,{stdio:'pipe'}),/dirty worktree/);assert(!existsSync(releases));rmSync(join(dir,'dirty'));
- execFileSync(process.execPath,args,{stdio:'pipe'});const info=latestRelease(releases)!;assert.equal(info.version,'1.0.1');assert.equal(readFileSync(join(releases,'.github',info.id,'Briefsip-1.0.1-x86_64.AppImage'),'utf8'),'1.0.1');assert.equal(JSON.parse(readFileSync(join(dir,'desktop/package.json'),'utf8')).version,'1.0.0');
+ execFileSync(process.execPath,args,{stdio:'pipe'});const info=latestRelease(releases)!;assert.equal(info.version,'1.0.1');assert.equal(readFileSync(join(releases,'.github',info.id,'Minarbot-1.0.1-x86_64.AppImage'),'utf8'),'1.0.1');assert.equal(JSON.parse(readFileSync(join(dir,'desktop/package.json'),'utf8')).version,'1.0.0');
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
 
@@ -93,8 +95,8 @@ test('launcher commits healthy trial, preserves data and request identity, and r
 for(const mode of ['wrong','exit'])test(`launcher ${mode} candidate rolls back release and original DB snapshot`,async()=>{
  const dir=temp();let f:Awaited<ReturnType<typeof launcher>>|undefined;try{const first=publishFixture(dir,'1.0.0');f=await launcher(dir,first.id);
  // Fixture holds only the side-file server lock, allowing a test-only inspection connection.
- const db=testDatabase(join(f.data,'briefsip.sqlite'));db.exec("INSERT INTO data VALUES('owner data intact')");db.close();
- const bad=publishFixture(dir,'1.0.1',mode),id=randomUUID();await launcherRequest(f.options,{type:'apply',id,target:bad.id,version:bad.version});const state=await until(async()=>{const s=await launcherRequest(f!.options,{type:'status'});return (s.lastAttempt as {status?:string})?.status==='rolled-back'?s:undefined;});assert.equal(state.current,first.id);await until(async()=>{try{return (await (await fetch(`http://127.0.0.1:${f!.port}/api/environment`)).json()).version==='1.0.0';}catch{return false;}});const restored=testDatabase(join(f.data,'briefsip.sqlite'));assert.deepEqual(restored.prepare('SELECT value FROM data').all().map(r=>r.value),['owner data intact']);restored.close();assert.equal(selectedRelease(join(dir,'releases')),first.id);assert.match(String((state.lastAttempt as {reason:string}).reason),/health|exited/i);
+ const db=testDatabase(join(f.data,'minarbot.sqlite'));db.exec("INSERT INTO data VALUES('owner data intact')");db.close();
+ const bad=publishFixture(dir,'1.0.1',mode),id=randomUUID();await launcherRequest(f.options,{type:'apply',id,target:bad.id,version:bad.version});const state=await until(async()=>{const s=await launcherRequest(f!.options,{type:'status'});return (s.lastAttempt as {status?:string})?.status==='rolled-back'?s:undefined;});assert.equal(state.current,first.id);await until(async()=>{try{return (await (await fetch(`http://127.0.0.1:${f!.port}/api/environment`)).json()).version==='1.0.0';}catch{return false;}});const restored=testDatabase(join(f.data,'minarbot.sqlite'));assert.deepEqual(restored.prepare('SELECT value FROM data').all().map(r=>r.value),['owner data intact']);restored.close();assert.equal(selectedRelease(join(dir,'releases')),first.id);assert.match(String((state.lastAttempt as {reason:string}).reason),/health|exited/i);
  }finally{await f?.close();rmSync(dir,{recursive:true,force:true});}
 });
 
@@ -131,8 +133,8 @@ test('peer fan-out needs both owners, grants no default update scope, streams ve
 test('peer SHA-256 mismatch rejects download before publication',async()=>{const dir=temp();try{const info=publishFixture(dir,'1.0.0'),archive=await releaseArchive(join(dir,'releases'),info.id);try{const bytes=readFileSync(archive.file);bytes[bytes.length-1]^=1;await assert.rejects(receiveRelease(new Response(bytes,{headers:{'Content-Type':'application/gzip','X-Briefsip-SHA256':archive.sha256}}),join(dir,'received'),info.id,archive.sha256),/SHA-256 mismatch/);assert(!existsSync(join(dir,'received',info.id)));}finally{archive.cleanup();}}finally{rmSync(dir,{recursive:true,force:true});}});
 
 test('interrupted trial recovers immutable snapshot before restarting previous release',async()=>{
- const dir=temp();let f:Awaited<ReturnType<typeof launcher>>|undefined, restarted:ChildProcess|undefined;try{const first=publishFixture(dir,'1.0.0');f=await launcher(dir,first.id);const db=testDatabase(join(f.data,'briefsip.sqlite'));db.exec("INSERT INTO data VALUES('before crash')");db.close();const bad=publishFixture(dir,'1.0.1','wrong');await launcherRequest(f.options,{type:'apply',id:randomUUID(),target:bad.id,version:bad.version});await until(async()=>{const state=await launcherRequest(f!.options,{type:'status'});if((state.lastAttempt as {status?:string})?.status!=='verifying')return false;try{const check=testDatabase(join(f!.data,'briefsip.sqlite'));const damaged=check.prepare('SELECT value FROM data').get()?.value==='trial damage';check.close();return damaged;}catch{return false;}});const died=once(f.child,'exit');f.child.kill('SIGKILL');await died;await delay(200);
- let log='';restarted=spawn(...launcherCommand(f.config),{stdio:['ignore','pipe','pipe']});restarted.stderr!.on('data',b=>{log+=b;});await until(async()=>{try{const s=await launcherRequest(f!.options,{type:'status'});return (s.lastAttempt as {status?:string})?.status==='rolled-back';}catch{return false;}},15000).catch(e=>{throw new Error(String(e)+'\n'+log);});await until(async()=>{try{return (await (await fetch(`http://127.0.0.1:${f!.port}/api/environment`)).json()).version==='1.0.0';}catch{return false;}});const restored=testDatabase(join(f.data,'briefsip.sqlite'));assert.equal(restored.prepare('SELECT value FROM data').get()?.value,'before crash');restored.close();
+ const dir=temp();let f:Awaited<ReturnType<typeof launcher>>|undefined, restarted:ChildProcess|undefined;try{const first=publishFixture(dir,'1.0.0');f=await launcher(dir,first.id);const db=testDatabase(join(f.data,'minarbot.sqlite'));db.exec("INSERT INTO data VALUES('before crash')");db.close();const bad=publishFixture(dir,'1.0.1','wrong');await launcherRequest(f.options,{type:'apply',id:randomUUID(),target:bad.id,version:bad.version});await until(async()=>{const state=await launcherRequest(f!.options,{type:'status'});if((state.lastAttempt as {status?:string})?.status!=='verifying')return false;try{const check=testDatabase(join(f!.data,'minarbot.sqlite'));const damaged=check.prepare('SELECT value FROM data').get()?.value==='trial damage';check.close();return damaged;}catch{return false;}});const died=once(f.child,'exit');f.child.kill('SIGKILL');await died;await delay(200);
+ let log='';restarted=spawn(...launcherCommand(f.config),{stdio:['ignore','pipe','pipe']});restarted.stderr!.on('data',b=>{log+=b;});await until(async()=>{try{const s=await launcherRequest(f!.options,{type:'status'});return (s.lastAttempt as {status?:string})?.status==='rolled-back';}catch{return false;}},15000).catch(e=>{throw new Error(String(e)+'\n'+log);});await until(async()=>{try{return (await (await fetch(`http://127.0.0.1:${f!.port}/api/environment`)).json()).version==='1.0.0';}catch{return false;}});const restored=testDatabase(join(f.data,'minarbot.sqlite'));assert.equal(restored.prepare('SELECT value FROM data').get()?.value,'before crash');restored.close();
  }finally{if(restarted)await stop(restarted);await f?.close();rmSync(dir,{recursive:true,force:true});}
 });
 
@@ -141,7 +143,7 @@ test('Rust trial gates owner work until matching private socket commit', {timeou
  const control=netServer(client=>{let raw='';client.on('data',chunk=>{raw+=chunk;if(!raw.includes('\n'))return;const q=JSON.parse(raw);client.end(JSON.stringify(q.type==='trial'?{committed:committed&&q.id===id}:{protocol:1,current:'development'})+'\n');});});
  try{
   await new Promise<void>(done=>control.listen(socket,done));chmodSync(socket,0o600);const port=await freePort(),app={origin:`http://127.0.0.1:${port}`};
-  child=spawn(rustBinary('briefsip-server',process.env.BRIEFSIP_RUST_BINARY),[],{env:{PATH:process.env.PATH,HOME:dir,PORT:String(port),BRIEFSIP_DATA_DIR:join(dir,'data'),BRIEFSIP_UPDATE_TRIAL:id,BRIEFSIP_LAUNCHER_SOCKET:socket},stdio:'ignore'});
+  child=spawn(rustBinary('minarbot-server',process.env.MINARBOT_RUST_BINARY),[],{env:{PATH:process.env.PATH,HOME:dir,PORT:String(port),MINARBOT_DATA_DIR:join(dir,'data'),MINARBOT_UPDATE_TRIAL:id,MINARBOT_LAUNCHER_SOCKET:socket},stdio:'ignore'});
   await until(async()=>{try{return (await fetch(app.origin+'/api/environment')).ok;}catch{return false;}});
   await api(app,'/api/updates');await api(app,'/api/agents',undefined,503);await api(app,'/api/machines',undefined,503);await api(app,'/api/pairing-codes',{id:randomUUID()},503);
   committed=true;await until(async()=>{try{return (await fetch(app.origin+'/api/agents')).status===200;}catch{return false;}});await api(app,'/api/machines');
@@ -153,33 +155,33 @@ test('Rust launcher trials native Rust server, commits over socket, and rolls ba
  try{
   function native(version:string){
    const release=publishFixture(dir,version),path=join(dir,'releases',release.id);
-   cpSync(rustBinary('briefsip-server',process.env.BRIEFSIP_RUST_BINARY),join(path,'bin/briefsip-server'));
-   execFileSync('strip',['--strip-debug',join(path,'bin/briefsip-server')]);
+   cpSync(rustBinary('minarbot-server',process.env.MINARBOT_RUST_BINARY),join(path,'bin/minarbot-server'));
+   execFileSync('strip',['--strip-debug',join(path,'bin/minarbot-server')]);
    writeFileSync(join(path,'package.json'),JSON.stringify({version,type:'module'}));
    const info={...release,files:fileManifest(path)};writeFileSync(join(path,'release.json'),JSON.stringify(info));
    return info;
   }
   const first=native('1.0.0');f=await launcher(dir,first.id);const app={origin:`http://127.0.0.1:${f.port}`};
   assert.equal((await api(app,'/api/environment')).version,'1.0.0');
-  const db=testDatabase(join(f.data,'briefsip.sqlite'));db.exec("CREATE TABLE native_fixture(value TEXT);INSERT INTO native_fixture VALUES('preserved')");db.close();
+  const db=testDatabase(join(f.data,'minarbot.sqlite'));db.exec("CREATE TABLE native_fixture(value TEXT);INSERT INTO native_fixture VALUES('preserved')");db.close();
   const second=native('1.0.1'),id=randomUUID();
   await api(app,'/api/updates/apply',{id,version:second.version,source:'Local feed'},202);
   await until(async()=>{try{return (await launcherRequest(f!.options,{type:'trial',id})).committed===true;}catch{return false;}});
   await until(async()=>{try{return (await fetch(app.origin+'/api/agents')).status===200;}catch{return false;}});
   assert.equal((await api(app,'/api/environment')).version,'1.0.1');
   assert.equal((await launcherRequest(f.options,{type:'status'})).current,second.id);
-  const third=native('1.0.2');chmodSync(join(dir,'releases',third.id,'bin/briefsip-server'),0o600);
+  const third=native('1.0.2');chmodSync(join(dir,'releases',third.id,'bin/minarbot-server'),0o600);
   third.files=fileManifest(join(dir,'releases',third.id));writeFileSync(join(dir,'releases',third.id,'release.json'),JSON.stringify(third));
   const failed=randomUUID();await api(app,'/api/updates/apply',{id:failed,version:third.version,source:'Local feed'},202);
   const rollback=await until(async()=>{const state=await launcherRequest(f!.options,{type:'status'});return (state.lastAttempt as {status?:string})?.status==='rolled-back'?state:undefined;});
   assert.equal((rollback.lastAttempt as {snapshotReady?:boolean}).snapshotReady,true);
   assert.match((rollback.lastAttempt as {reason:string}).reason,/health|exited/i);
   await until(async()=>{try{return (await api(app,'/api/environment')).version==='1.0.1';}catch{return false;}});
-  const restored=testDatabase(join(f.data,'briefsip.sqlite'));assert.equal(restored.prepare('SELECT value FROM native_fixture').get()?.value,'preserved');restored.close();
+  const restored=testDatabase(join(f.data,'minarbot.sqlite'));assert.equal(restored.prepare('SELECT value FROM native_fixture').get()?.value,'preserved');restored.close();
  }finally{await f?.close();rmSync(dir,{recursive:true,force:true});}
 });
 
-if(process.env.BRIEFSIP_UPDATE_IT==='1')test('real release build, HTTP update, broken trial rollback and intact workspace', {timeout:900000},async()=>{
+if(process.env.MINARBOT_UPDATE_IT==='1')test('real release build, HTTP update, broken trial rollback and intact workspace', {timeout:900000},async()=>{
  const dir=temp(),source=join(dir,'real-app'),releases=join(dir,'releases');let f:Awaited<ReturnType<typeof launcher>>|undefined;
  try{
  cpSync(join(root,'app'),source,{recursive:true,filter:p=>!p.includes('/node_modules')&&!p.includes('/dist')});symlinkSync(join(root,'app/node_modules'),join(source,'node_modules'),'dir');
@@ -191,7 +193,7 @@ if(process.env.BRIEFSIP_UPDATE_IT==='1')test('real release build, HTTP update, b
  const agent={id:randomUUID(),name:'Owner data survives',model:'fixture',instructions:'Preserve this agent.'};await api(app,'/api/agents',agent,201);
  function version(v:string){pkg.version=v;lock.version=v;lock.packages[''].version=v;writeFileSync(join(source,'package.json'),JSON.stringify(pkg,null,2)+'\n');writeFileSync(join(source,'package-lock.json'),JSON.stringify(lock,null,2)+'\n');}
  version('0.1.1');const second=await realBuild('Integration v2');const id=randomUUID();await api(app,'/api/updates/apply',{id,version:second.version,source:'Local feed'},202);await until(async()=>{try{const state=await launcherRequest(f!.options,{type:'status'});return state.current===second.id&&(state.lastAttempt as {status?:string})?.status==='done';}catch{return false;}},60000).catch(e=>{throw new Error(String(e)+'\n'+f!.log);});assert.equal((await api(app,'/api/agents')).agents.find((r:{id:string})=>r.id===agent.id).name,agent.name);
- version('0.1.2');const serverPath=join(source,'server.ts');const code=readFileSync(serverPath,'utf8').replace("if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {", "if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {\n if (process.env.BRIEFSIP_UPDATE_TRIAL) { const damaged = new DatabaseSync(resolve(process.env.BRIEFSIP_DATA_DIR!, 'briefsip.sqlite')); damaged.exec(\"UPDATE agents SET name='BROKEN UPDATE'\"); damaged.close(); throw new Error('Integration broken release'); }");writeFileSync(serverPath,code);const third=await realBuild('Integration broken v3');const badId=randomUUID();await api(app,'/api/updates/apply',{id:badId,version:third.version,source:'Local feed'},202);await until(async()=>{try{const state=await launcherRequest(f!.options,{type:'status'});const last=state.lastAttempt as {id?:string;status?:string}|undefined;return state.current===second.id&&last?.id===badId&&last.status==='rolled-back';}catch{return false;}},60000).catch(e=>{throw new Error(String(e)+'\n'+f!.log);});assert.equal((await api(app,'/api/agents')).agents.find((r:{id:string})=>r.id===agent.id).name,agent.name);assert.equal(selectedRelease(releases),second.id);
+ version('0.1.2');const serverPath=join(source,'server.ts');const code=readFileSync(serverPath,'utf8').replace("if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {", "if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {\n if (process.env.MINARBOT_UPDATE_TRIAL) { const damaged = new DatabaseSync(resolve(process.env.MINARBOT_DATA_DIR!, 'minarbot.sqlite')); damaged.exec(\"UPDATE agents SET name='BROKEN UPDATE'\"); damaged.close(); throw new Error('Integration broken release'); }");writeFileSync(serverPath,code);const third=await realBuild('Integration broken v3');const badId=randomUUID();await api(app,'/api/updates/apply',{id:badId,version:third.version,source:'Local feed'},202);await until(async()=>{try{const state=await launcherRequest(f!.options,{type:'status'});const last=state.lastAttempt as {id?:string;status?:string}|undefined;return state.current===second.id&&last?.id===badId&&last.status==='rolled-back';}catch{return false;}},60000).catch(e=>{throw new Error(String(e)+'\n'+f!.log);});assert.equal((await api(app,'/api/agents')).agents.find((r:{id:string})=>r.id===agent.id).name,agent.name);assert.equal(selectedRelease(releases),second.id);
  }catch(error){throw new Error((error instanceof Error ? error.stack : String(error))+'\nCause: '+String((error as {cause?:unknown})?.cause)+'\n'+f?.log);}finally{await f?.close();rmSync(dir,{recursive:true,force:true});}
 });
 const originalFetch=globalThis.fetch;

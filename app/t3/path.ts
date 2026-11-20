@@ -5,7 +5,7 @@ import { userInfo } from 'node:os';
 import { basename, isAbsolute } from 'node:path';
 
 const names = ['PATH', '__MISE_DIFF', 'JAVA_HOME'] as const;
-const marker = (name: string, edge: string) => `__BRIEFSIP_ENV_${name}_${edge}__`;
+const marker = (name: string, edge: string) => `__MINARBOT_ENV_${name}_${edge}__`;
 
 export function listLoginShellCandidates(platform: NodeJS.Platform, shell?: string, userShell?: string | null) {
   if (userShell === undefined) { try { userShell = userInfo().shell; } catch { userShell = null; } }

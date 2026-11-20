@@ -8,7 +8,7 @@ import '../ui/tokens.css';
 import '../ui/base.css';
 import '../ui/kit.css';
 import '../ui/chat.css';
-import '../ui/briefsip.css';
+import '../ui/minarbot.css';
 import '../ui/density.css';
 import './hub.css';
 applyPresentation(document.documentElement, readPresentation().value);

@@ -21,7 +21,7 @@ test('model discovery validates catalog and never follows credential redirects',
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address(); assert(address && typeof address !== 'string');
   const base = `http://127.0.0.1:${address.port}/v1`;
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-models-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-models-'));
   let app = await startApp({ database: join(dir, 'state.sqlite'), baseURL: base, apiKey: 'fixture-secret' }, { directory: dir, servers: [server] });
   try {
     const models = () => fetch(app.origin + '/api/models');

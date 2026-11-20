@@ -1,4 +1,4 @@
-export const speechVoiceKey = 'briefsip.speech.voice.v1';
+export const speechVoiceKey = 'minarbot.speech.voice.v1';
 export const voiceKey = (voice: Pick<SpeechSynthesisVoice, 'voiceURI' | 'name' | 'lang'>) => JSON.stringify([voice.voiceURI, voice.name, voice.lang]);
 
 export function speechChunks(text: string) {

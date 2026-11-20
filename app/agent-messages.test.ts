@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 
 test('teammate messages correlate groups, isolate context, persist receipts and bound delivery', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-messages-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-messages-'));
   const calls: any[] = [], held: (() => void)[] = [];
   let targets: string[] = [], sender = '', mode = 'group', failContinuation = false;
   const provider = createServer(async (req, res) => {

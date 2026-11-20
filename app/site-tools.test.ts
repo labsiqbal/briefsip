@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 
 test('site tools bind sent files and owner, journal results and never replay old mutation on restart', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-site-tools-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-site-tools-'));
   let args: unknown = {}, tool = 'publish_site', result: any, hold = false, observed = false, advertised = false;
   let generate = false;
   let before: (() => Promise<unknown>) | undefined;

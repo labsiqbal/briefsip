@@ -20,7 +20,7 @@ const failedRequest = (status: number) => `The provider failed while processing 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 test('local provider discovery and execution matrix preserves errors, bounded dispatch and secret isolation', async t => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-provider-matrix-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-provider-matrix-'));
   const logs: string[] = [], responses: string[] = [];
   for (const method of ['log', 'info', 'warn', 'error', 'debug'] as const) t.mock.method(console, method, (...args: unknown[]) => { logs.push(format(...args)); });
   let mode = 'catalog', requests = 0, redirected = 0, held: ServerResponse | undefined;

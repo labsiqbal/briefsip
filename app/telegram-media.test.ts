@@ -12,7 +12,7 @@ import {pdfFixture} from './test-support/pdf-fixture.ts';
 import { rustConnectorFixture, slackEnvelope, telegramUpdate, waitFor } from './test-support/rust-connector-fixture.ts';
 
 test('Telegram media uploads once in requester thread and retries lost uploads/messages with original bytes',async()=>{
- const root=mkdtempSync(join(tmpdir(),'briefsip-telegram-media-')),agent=randomUUID(),other=randomUUID(),token='local-script-test-token-with-32-characters';
+ const root=mkdtempSync(join(tmpdir(),'minarbot-telegram-media-')),agent=randomUUID(),other=randomUUID(),token='local-script-test-token-with-32-characters';
  const captures:any[]=[],downloads:string[]=[];let sequence=0;
  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jkAAAAABJRU5ErkJggg==','base64');
  const payloads:Record<string,Buffer>={text:Buffer.from('Exact attachment contents'),image:png,binary:Buffer.from([0,255]),oversize:Buffer.alloc(4*1024*1024+1)};

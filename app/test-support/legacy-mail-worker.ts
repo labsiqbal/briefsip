@@ -44,7 +44,7 @@ export function createMailWorker(db: DatabaseSync, options: { apiKey: string; ke
     if (!job) return { state: 'deferred' as const };
     let state: 'sent' | 'unknown' | 'failed' = 'unknown', remoteId: string | null = null;
     try {
-      const response = await fetch(endpoint, { method: 'POST', headers: { Authorization: `Bearer ${options.apiKey}`, 'Content-Type': 'application/json', 'Idempotency-Key': `briefsip-invite/${invitationId}/${job.row.revision}` }, body: new Uint8Array(job.plaintext), signal: AbortSignal.timeout(15000), redirect: 'error' });
+      const response = await fetch(endpoint, { method: 'POST', headers: { Authorization: `Bearer ${options.apiKey}`, 'Content-Type': 'application/json', 'Idempotency-Key': `minarbot-invite/${invitationId}/${job.row.revision}` }, body: new Uint8Array(job.plaintext), signal: AbortSignal.timeout(15000), redirect: 'error' });
       let result = ''; if (response.body) { for await (const chunk of response.body) { if (Buffer.byteLength(result) + chunk.length > 65536) throw new Error('Mail response exceeds limit'); result += Buffer.from(chunk).toString('utf8'); } }
       if (response.ok) { const parsed = closedObject(parseJson(result), ['id']); if (typeof parsed.id !== 'string' || !parsed.id || parsed.id.length > 200) throw new Error('Missing mail delivery ID'); remoteId = parsed.id; state = 'sent'; }
       else if (response.status >= 400 && response.status < 500 && ![408, 429].includes(response.status)) {

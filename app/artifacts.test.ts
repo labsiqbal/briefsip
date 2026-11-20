@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 
 test('generated text artifacts persist across interruption without duplicate creation', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-artifacts-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-artifacts-'));
   let hold = false, observedResult = false;
   let releaseLate: (() => void) | undefined;
   let unrelatedFile = '', deniedLater = false;

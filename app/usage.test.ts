@@ -9,7 +9,7 @@ import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 
 test('Rust usage returns exact decimal totals, unknown counts and stable pages', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-usage-totals-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-usage-totals-'));
   const database = join(dir, 'state.sqlite');
   const app = await startApp({ database });
   try {
@@ -42,7 +42,7 @@ test('Rust usage returns exact decimal totals, unknown counts and stable pages',
 });
 
 test('usage records each provider call including tool loops, missing counts and failure', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-usage-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-usage-'));
   let mode = 'known', calls = 0, accepted: (() => void) | undefined;
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;

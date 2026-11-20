@@ -9,7 +9,7 @@ import { startApp } from './test-bridge.ts';
 import { parseAgentTemplate, templateCommand } from './shared/agent-template.ts';
 
 test('backup model is opt-in, bounded, durable and never replays after activity or uncertainty', async t => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-fallback-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-fallback-'));
   const calls: { model: string; mode: string }[] = [];
   let mode = 'success', resumed = false;
   const timeout = new AbortController(), realTimeout = AbortSignal.timeout.bind(AbortSignal);

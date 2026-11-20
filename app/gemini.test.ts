@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 
 test('Gemini HTTP streaming, signed tool recovery, models and cancellation', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-gemini-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-gemini-'));
   let mode = 'text', requests = 0, toolCalls = 0, held = false;
   const signed = [{ text: 'internal', thought: true }, { functionCall: { name: 'create_text_file', args: { name: 'native.txt', text: 'Gemini artifact' } }, thoughtSignature: 'opaque-signature' }];
   const provider = createServer(async (req, res) => {

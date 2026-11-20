@@ -9,7 +9,7 @@ import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 
 test('provider settings read stays private and excludes endpoint and credentials', async () => {
-  const directory=mkdtempSync(join(tmpdir(),'briefsip-provider-read-')), secret=randomUUID();
+  const directory=mkdtempSync(join(tmpdir(),'minarbot-provider-read-')), secret=randomUUID();
   let args:unknown={},result:any,advertised=false;
   const provider=createServer(async(req,res)=>{
     assert.equal(req.headers.authorization,`Bearer ${secret}`);
@@ -33,7 +33,7 @@ test('provider settings read stays private and excludes endpoint and credentials
 });
 
 test('model changes preserve execution snapshot, scope and journal across restart', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-model-tool-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-model-tool-'));
   let args: unknown = {}, result: any, hold = false, continued = false, answerOnly = false, advertised = false;
   let before: (() => Promise<unknown>) | undefined;
   const models: string[] = [];

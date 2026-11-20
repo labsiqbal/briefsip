@@ -11,9 +11,9 @@ import { digestCommand, sha256 } from './shared/protocol.ts';
 import { startRustServer } from './rust-test-server.ts';
 
 test('Rust signed device enrollment, stream fencing, sessions, receipts and sync match Node contracts', { timeout: 30000 }, async t => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-rust-devices-')), database = join(dir, 'db.sqlite'), now = Date.now();
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-rust-devices-')), database = join(dir, 'db.sqlite'), now = Date.now();
   const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
-  const auth = { secretKey: 'sk_test_fixture', publishableKey: 'pk_test_fixture', issuer: 'https://fixture.clerk.accounts.dev', origin: 'https://briefsip.example', development: true, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString() };
+  const auth = { secretKey: 'sk_test_fixture', publishableKey: 'pk_test_fixture', issuer: 'https://fixture.clerk.accounts.dev', origin: 'https://minarbot.example', development: true, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString() };
   const account = randomUUID(), project = randomUUID(), actor = { accountId: account, subject: 'user_fixture', issuer: auth.issuer, sessionId: 'sess_fixture', expiresAt: now + 60000 };
   const db = testDatabase(database); installFrozenNodeSchema(db);
   db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES(?,?,?,?)').run(account, auth.issuer, actor.subject, now);

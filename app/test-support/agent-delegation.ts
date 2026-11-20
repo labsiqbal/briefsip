@@ -11,7 +11,7 @@ export function peerOriginated(db: DatabaseSync, turn: string) {
 }
 export class DelegationError extends Error { status = 409; constructor(message: string, status = 409) { super(message); this.status = status; } }
 export function initializeDelegation(db: DatabaseSync) {
-  db.exec(readFileSync(new URL('../../crates/briefsip-server/src/computer/remote-agents.sql', import.meta.url), 'utf8'));
+  db.exec(readFileSync(new URL('../../crates/minarbot-server/src/computer/remote-agents.sql', import.meta.url), 'utf8'));
   if (!db.prepare('PRAGMA table_info(turns)').all().some(row => row.name === 'message_depth')) db.exec('ALTER TABLE turns ADD COLUMN message_depth INTEGER NOT NULL DEFAULT 0');
-  db.exec(readFileSync(new URL('../../crates/briefsip-server/src/turns/agent-delegation.sql', import.meta.url), 'utf8'));
+  db.exec(readFileSync(new URL('../../crates/minarbot-server/src/turns/agent-delegation.sql', import.meta.url), 'utf8'));
 }

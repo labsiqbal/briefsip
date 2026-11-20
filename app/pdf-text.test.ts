@@ -16,7 +16,7 @@ async function parserStarted(ready: Promise<void>) {
 }
 
 test('PDF HTTP preview and messages preserve source, scope, retry, routing, tools and restart', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-pdf-')), payloads: any[] = [];
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-pdf-')), payloads: any[] = [];
   let target = '', tool = false, generated = 0, blocked: ServerResponse | undefined;
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;

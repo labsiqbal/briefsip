@@ -11,7 +11,7 @@ import { canonicalHttp } from './test-support/canonical-http.ts';
 import { canonicalJson, digestCommand } from './shared/protocol.ts';
 
 test('Rust forks preserve bounded persisted transcripts and restart receipts', { timeout: 20000 }, async () => {
-  const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-fork-')), database = join(root, 'db.sqlite');
+  const root = mkdtempSync(join(tmpdir(), 'minarbot-rust-fork-')), database = join(root, 'db.sqlite');
   let app: Awaited<ReturnType<typeof startRustServer>> | undefined;
   try {
     const initial = await startRustServer({ database }); await initial.close();
@@ -40,7 +40,7 @@ test('Rust forks preserve bounded persisted transcripts and restart receipts', {
 });
 
 test('Rust data reads preserve seeded history and local CRUD receipts across restart', { timeout: 20000 }, async () => {
-  const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-data-')), database = join(root, 'db.sqlite');
+  const root = mkdtempSync(join(tmpdir(), 'minarbot-rust-data-')), database = join(root, 'db.sqlite');
   let initial: Awaited<ReturnType<typeof startRustServer>> | undefined;
   let rust: Awaited<ReturnType<typeof startRustServer>> | undefined;
   try {
@@ -91,7 +91,7 @@ test('Rust data reads preserve seeded history and local CRUD receipts across res
 test('Rust deletion rolls back FK closure, preserves room history and retries external cleanup', { timeout: 20000 }, async () => {
   const { mkdirSync, writeFileSync, existsSync } = await import('node:fs');
   const { execFileSync } = await import('node:child_process');
-  const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-delete-')), database = join(root, 'db.sqlite');
+  const root = mkdtempSync(join(tmpdir(), 'minarbot-rust-delete-')), database = join(root, 'db.sqlite');
   let app: Awaited<ReturnType<typeof startRustServer>> | undefined;
   try {
     const initial = await startRustServer({ database }); await initial.close();
@@ -100,7 +100,7 @@ test('Rust deletion rolls back FK closure, preserves room history and retries ex
     mkdirSync(desktop, { recursive: true }); writeFileSync(join(desktop, 'saved'), 'saved'); mkdirSync(workspace);
     execFileSync('git', ['init', '-q', workspace]);
     execFileSync('git', ['-C', workspace, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'Fixture', '--allow-empty']);
-    const hash = execFileSync('git', ['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), ref = `refs/briefsip/checkpoints/${direct}`;
+    const hash = execFileSync('git', ['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), ref = `refs/minarbot/checkpoints/${direct}`;
     execFileSync('git', ['-C', workspace, 'update-ref', ref, hash]);
     for (const id of [agent, other]) db.prepare("INSERT INTO agents(id,name,model,instructions) VALUES(?,'Fixture','fixture','Help')").run(id);
     db.prepare("INSERT INTO channels(id,name,instructions,lead) VALUES(?,'Room','Help',?)").run(channel, agent);
@@ -131,7 +131,7 @@ test('Rust deletion rolls back FK closure, preserves room history and retries ex
 });
 
 test('Rust canonical projects preserve ownership, CAS and durable command receipts', { timeout: 20000 }, async () => {
-  const f = canonicalHttp('briefsip-rust-projects-'), { db, owner } = f;
+  const f = canonicalHttp('minarbot-rust-projects-'), { db, owner } = f;
   const account = owner.accountId, project = randomUUID();
   const projectPath = `/api/projects/${project}`;
   const send = f.send;
@@ -199,7 +199,7 @@ Help`, files: [] } };
       const changed = await send(agentPath + '/' + kind, 'PUT', change);
       assert.equal(changed.status, 200, JSON.stringify(changed));
       assert.deepEqual(changed.body.data, { projectId: second, agentId: aid, ...fields, revision });
-      assert.equal(changed.body.receipt.payloadDigest, digestCommand([`briefsip-agent-${kind}-v1`, second, aid, change]));
+      assert.equal(changed.body.receipt.payloadDigest, digestCommand([`minarbot-agent-${kind}-v1`, second, aid, change]));
     }
     const collaborator = f.addAccount('user_member').accountId;
     db.prepare("INSERT INTO project_members VALUES(?,?,'member',1,0)").run(project, collaborator);

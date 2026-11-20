@@ -31,9 +31,9 @@ async function api<T>(origin: string, path: string, body?: unknown): Promise<T> 
 
 type Cleanup = (() => Promise<void>)[];
 async function start(cleanup: Cleanup, dir: string, config: object) {
-  const binary = rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
+  const binary = rustBinary('minarbot-server', process.env.MINARBOT_RUST_BINARY);
   const child = spawn(binary, ['--test-config'], {
-    env: { ...process.env, HOME: dir, BRIEFSIP_TEST_SERVER: 'rust', BRIEFSIP_TEST_PARENT: String(process.pid) },
+    env: { ...process.env, HOME: dir, MINARBOT_TEST_SERVER: 'rust', MINARBOT_TEST_PARENT: String(process.pid) },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   const exited = once(child, 'exit');
@@ -50,7 +50,7 @@ async function start(cleanup: Cleanup, dir: string, config: object) {
       let stdout = '';
       child.stdout.on('data', bytes => {
         stdout += String(bytes);
-        const match = /^Briefsip: (http:\/\/[^\r\n]+)$/m.exec(stdout);
+        const match = /^Minarbot: (http:\/\/[^\r\n]+)$/m.exec(stdout);
         if (match) resolve(match[1]);
       });
     }),
@@ -61,7 +61,7 @@ async function start(cleanup: Cleanup, dir: string, config: object) {
 
 type Transfer = (upstream: IncomingMessage, downstream: ServerResponse) => Promise<void>;
 async function fixture(t: TestContext, testPeerUpdateTimeoutMs?: number, relayApply = false) {
-  const dir = await mkdtemp(join(tmpdir(), 'briefsip-peer-transfer-'));
+  const dir = await mkdtemp(join(tmpdir(), 'minarbot-peer-transfer-'));
   const cleanup: Cleanup = [];
   t.after(async () => {
     for (const close of cleanup.reverse()) await close();
@@ -244,7 +244,7 @@ async function drop(reply: IncomingMessage, res: ServerResponse) {
 }
 
 test('peer fan-out follows receiver progress beyond the apply request deadline', { timeout: 90_000 }, async t => {
-  const slow = process.env.BRIEFSIP_PEER_CONTROL === '1';
+  const slow = process.env.MINARBOT_PEER_CONTROL === '1';
   const deadline = slow ? 49_000 : 1_000;
   const peers = await fixture(t, deadline, true);
   const release = await peers.release(11, randomBytes(slow ? 1_625_000 : 90_000));
@@ -407,7 +407,7 @@ test('peer fan-out reports timeout, integrity, size, permission, and launcher fa
   await fails(7, 'peer_launcher_unavailable', forward);
 });
 
-if (process.env.BRIEFSIP_PEER_CONTROL === '1') {
+if (process.env.MINARBOT_PEER_CONTROL === '1') {
   test('25 KB/s control keeps fan-out open beyond 60 seconds', { timeout: 90_000 }, async t => {
     const peers = await fixture(t);
     const release = await peers.release(10, randomBytes(1_625_000));
@@ -421,7 +421,7 @@ if (process.env.BRIEFSIP_PEER_CONTROL === '1') {
   });
 }
 
-for (const rate of (process.env.BRIEFSIP_PEER_TEST_RATES ?? '').split(',').filter(Boolean).map(Number)) {
+for (const rate of (process.env.MINARBOT_PEER_TEST_RATES ?? '').split(',').filter(Boolean).map(Number)) {
   test(`20.8 MB peer archive reaches launcher at ${rate / 1000} KB/s`, { timeout: 900_000, concurrency: true }, async t => {
     assert(rate === 30000 || rate === 160000);
     const peers = await fixture(t);

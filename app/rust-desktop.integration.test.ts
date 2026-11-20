@@ -13,7 +13,7 @@ import { startApp } from './test-bridge.ts';
 import { connectVnc } from './test-support/agent-desktop-test-client.ts';
 import { benchmarkDesktop } from './test-support/rust-desktop-benchmark.ts';
 
-if (process.env.BRIEFSIP_DESKTOP_IT !== '1') throw new Error('Opt-in check: BRIEFSIP_DESKTOP_IT=1 node --experimental-strip-types --test rust-desktop.integration.test.ts');
+if (process.env.MINARBOT_DESKTOP_IT !== '1') throw new Error('Opt-in check: MINARBOT_DESKTOP_IT=1 node --experimental-strip-types --test rust-desktop.integration.test.ts');
 
 async function until(condition: () => boolean | Promise<boolean>) {
   const deadline = performance.now() + 15_000;
@@ -85,8 +85,8 @@ test('Linux sandbox: public fixture, input, file isolation, loopback denial, SIG
     const launch = desktopProcesses(profile).find(row => row.args[0] === '/usr/bin/bwrap' && row.args.includes('--unshare-net'));
     assert(launch, 'Rust manager must launch Bubblewrap with the private profile and network namespace');
     const command = launch.args.indexOf('--') + 1;
-    assert.deepEqual(launch.args.slice(command), ['/briefsip-server', '--desktop-supervisor', '/run/briefsip/proxy.sock']);
-    assert(desktopProcesses(profile).some(row => row.args[0] === '/briefsip-server' && row.args[1] === '--desktop-supervisor'));
+    assert.deepEqual(launch.args.slice(command), ['/minarbot-server', '--desktop-supervisor', '/run/minarbot/proxy.sock']);
+    assert(desktopProcesses(profile).some(row => row.args[0] === '/minarbot-server' && row.args[1] === '--desktop-supervisor'));
     const hiddenPaths = [marker, process.env.HOME!, dir, resolve('..'), `/run/user/${process.getuid!()}`];
     const inspect = 'for path do if test -e "$path"; then printf "Host path visible: %s\\n" "$path" >&2; exit 1; fi; done; printf "Host paths absent\\n"';
     const sandbox = await promisify(execFile)('/usr/bin/bwrap', [...launch.args.slice(1, command), '/usr/bin/sh', '-c', inspect, 'check-mounts', ...hiddenPaths], { env: { PATH: '/usr/bin:/bin', HOME: '/home/desktop' }, timeout: 5000 });
@@ -110,7 +110,7 @@ test('Linux sandbox: public fixture, input, file isolation, loopback denial, SIG
     await key('F11'); await new Promise(resolve => setTimeout(resolve, 500));
     await input('computer_click', { x: 250, y: 160 }); await until(() => clicked);
     await input('computer_click', { x: 250, y: 330 }); await until(() => focused);
-    await type('Briefsip desktop works'); await until(() => typed.has('Briefsip desktop works'));
+    await type('Minarbot desktop works'); await until(() => typed.has('Minarbot desktop works'));
     const screen = await fetch(app.origin + path + '/screenshot');
     assert(screen.ok);
     const image = await sharp(Buffer.from(await screen.arrayBuffer())).metadata();
@@ -125,7 +125,7 @@ test('Linux sandbox: public fixture, input, file isolation, loopback denial, SIG
       viewer.pointer(250, 160, 1); viewer.pointer(250, 160, 0); await until(() => clicked);
       viewer.pointer(250, 330, 1); viewer.pointer(250, 330, 0); await until(() => focused);
       viewer.key(0xff57, true); viewer.key(0xff57, false);
-      viewer.text(' via VNC'); await until(() => typed.has('Briefsip desktop works via VNC'));
+      viewer.text(' via VNC'); await until(() => typed.has('Minarbot desktop works via VNC'));
       viewer.requestFrame(); assert.notDeepEqual(await viewer.frame(), before);
     } finally { viewer.close(); }
 
@@ -152,7 +152,7 @@ test('Linux sandbox: public fixture, input, file isolation, loopback denial, SIG
     assert((await fetch(app.origin + path + '/screenshot')).ok);
     assert.equal((await post(path + '/stop', {})).state, 'off');
     await until(() => !desktopProcesses(profile).length);
-    console.log(JSON.stringify({ network, clicked, typed: typed.has('Briefsip desktop works via VNC'), filesystemHidden: true, crashCleanup: true, staleLeaseRecovery: true }));
+    console.log(JSON.stringify({ network, clicked, typed: typed.has('Minarbot desktop works via VNC'), filesystemHidden: true, crashCleanup: true, staleLeaseRecovery: true }));
   } finally {
     await app?.close();
     http.closeAllConnections(); tls.closeAllConnections();

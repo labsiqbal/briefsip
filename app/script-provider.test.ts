@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 
 test('script provider settings keep identity and credentials isolated, reject busy/revoked changes and preserve receipts', async () => {
-  const dir=mkdtempSync(join(tmpdir(),'briefsip-script-provider-')),token=randomBytes(32).toString('base64url'),secret=randomBytes(32).toString('base64url');
+  const dir=mkdtempSync(join(tmpdir(),'minarbot-script-provider-')),token=randomBytes(32).toString('base64url'),secret=randomBytes(32).toString('base64url');
   let releaseCatalog: (()=>void) | undefined, holdCatalog=false;
   const calls:{model:string;auth:string|undefined}[]=[];
   const provider=createServer(async(req,res)=>{if(req.method==='GET'){assert.equal(req.headers.authorization,`Bearer ${secret}`);const send=()=>res.end(JSON.stringify({data:[{id:'new'},{id:'old'}]}));if(holdCatalog)releaseCatalog=send;else send();return;}let raw='';for await(const chunk of req)raw+=chunk;const data=JSON.parse(raw);calls.push({model:data.model,auth:req.headers.authorization});if(data.messages.at(-1).content==='HOLD')return;res.end(JSON.stringify({choices:[{finish_reason:'stop',message:{content:'Done'}}]}));});

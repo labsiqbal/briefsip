@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { startApp } from './test-bridge.ts';
 
 test('local scripts require token and current agent grant, keep payload and retry identity', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-scripts-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-scripts-'));
   const token = randomBytes(32).toString('base64url'), prompts: string[] = [];
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
@@ -19,7 +19,7 @@ test('local scripts require token and current agent grant, keep payload and retr
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
   const options = { database: join(dir, 'state.sqlite'), baseURL: `http://127.0.0.1:${address.port}/v1`, scriptToken: token };
-  await assert.rejects(startApp({ ...options, scriptToken: 'short' }), /BRIEFSIP_SCRIPT_TOKEN/);
+  await assert.rejects(startApp({ ...options, scriptToken: 'short' }), /MINARBOT_SCRIPT_TOKEN/);
   let app = await startApp(options, { directory: dir, servers: [provider] });
   async function request(path: string, body?: unknown, status = 200, headers?: Record<string, string>) {
     const response = await new Promise<{ status: number | undefined; text: string }>((resolve, reject) => {

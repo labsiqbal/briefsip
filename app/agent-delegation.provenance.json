@@ -1,5 +1,5 @@
 {
-  "adapted": "T3 durable child-task delivery and Hermes delegation, group discussion, silence filtering and relay policy, implemented by Briefsip in Rust and SQLite.",
+  "adapted": "T3 durable child-task delivery and Hermes delegation, group discussion, silence filtering and relay policy, implemented by Minarbot in Rust and SQLite.",
   "t3": {
     "repository": "https://github.com/pingdotgg/t3code",
     "revision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
@@ -23,10 +23,10 @@
         ]
       }
     ],
-    "localPath": "crates/briefsip-server/src/turns/messaging.rs",
+    "localPath": "crates/minarbot-server/src/turns/messaging.rs",
     "localPaths": [
       "app/test-support/agent-delegation.ts",
-      "crates/briefsip-server/src/turns/messaging.rs"
+      "crates/minarbot-server/src/turns/messaging.rs"
     ]
   },
   "hermes": {
@@ -88,7 +88,7 @@
         "symbols": [
           "group-chat prompt"
         ],
-        "adaptation": "Role and speaker-aware room system prompt translated to Briefsip."
+        "adaptation": "Role and speaker-aware room system prompt translated to Minarbot."
       },
       {
         "path": "tools/bot_relay.py",
@@ -105,15 +105,15 @@
         "symbols": [
           "HostedRoomService.stop_room"
         ],
-        "adaptation": "Persist room-root stop fence before aborting active members and cancelling queued descendants; exact immutable control receipts in Briefsip SQLite. No hosted driver, leases or Hermes runtime."
+        "adaptation": "Persist room-root stop fence before aborting active members and cancelling queued descendants; exact immutable control receipts in Minarbot SQLite. No hosted driver, leases or Hermes runtime."
       }
     ],
-    "localPath": "crates/briefsip-server/src/turns/messaging.rs",
+    "localPath": "crates/minarbot-server/src/turns/messaging.rs",
     "localPaths": [
       "app/test-support/agent-delegation.ts",
-      "crates/briefsip-server/src/turns/messaging.rs",
-      "crates/briefsip-server/src/turns/room.rs",
-      "crates/briefsip-server/src/data/history.rs"
+      "crates/minarbot-server/src/turns/messaging.rs",
+      "crates/minarbot-server/src/turns/room.rs",
+      "crates/minarbot-server/src/data/history.rs"
     ]
   },
   "remote": {
@@ -133,7 +133,7 @@
           "delivery_id",
           "first reply wins"
         ],
-        "adaptation": "Durable Briefsip MCP request journal with bounded polling and uncertain-send fence."
+        "adaptation": "Durable Minarbot MCP request journal with bounded polling and uncertain-send fence."
       }
     ],
     "localPath": "app/remote-agents.ts",
@@ -171,7 +171,7 @@
           "GatewayStreamConsumer._end_segment",
           "GatewayStreamConsumer._on_cancelled"
         ],
-        "adaptation": "Authoritative final replaces matching provisional segment; boundary/error/abort flush retains unfinished snapshots. Browser persistence uses Briefsip's existing 40 ms cadence, never platform quotas."
+        "adaptation": "Authoritative final replaces matching provisional segment; boundary/error/abort flush retains unfinished snapshots. Browser persistence uses Minarbot's existing 40 ms cadence, never platform quotas."
       }
     ],
     "localPaths": [
@@ -182,8 +182,8 @@
       "app/src/ui/transcript.ts",
       "app/src/ui/TurnActivity.tsx",
       "app/src/ui/AgentConversation.tsx",
-      "crates/briefsip-server/src/turns/stream.rs"
+      "crates/minarbot-server/src/turns/stream.rs"
     ],
-    "adaptation": "Briefsip-owned TypeScript snapshot writer and SQLite delivery seam. Latest admitted provider call, ordered segments, provisional/final reconciliation and isolated display failures. Hermes remains read-only logic evidence; no runtime, UI, reasoning, platform transport or quota copied."
+    "adaptation": "Minarbot-owned TypeScript snapshot writer and SQLite delivery seam. Latest admitted provider call, ordered segments, provisional/final reconciliation and isolated display failures. Hermes remains read-only logic evidence; no runtime, UI, reasoning, platform transport or quota copied."
   }
 }

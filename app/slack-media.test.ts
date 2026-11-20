@@ -13,7 +13,7 @@ import { localScript } from './test-support/script-client.ts';
 import { rustConnectorFixture, slackEnvelope, telegramUpdate, waitFor } from './test-support/rust-connector-fixture.ts';
 
 test('Slack files snapshot bytes and retry uploads and turns without duplicate work',async()=>{
- const root=mkdtempSync(join(tmpdir(),'briefsip-slack-media-')),agent=randomUUID(),captures:any[]=[],downloads:string[]=[];
+ const root=mkdtempSync(join(tmpdir(),'minarbot-slack-media-')),agent=randomUUID(),captures:any[]=[],downloads:string[]=[];
  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jkAAAAABJRU5ErkJggg==','base64');
  const bytes:Record<string,Buffer>={FTEXT:Buffer.from('Exact Slack file content'),FIMAGE:png,FBINARY:Buffer.from([0,255]),FLARGE:Buffer.alloc(4*1024*1024+1),FEXTERNAL:Buffer.from('secret')};let sequence=0;
  const provider=createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;captures.push(JSON.parse(raw));res.end(JSON.stringify({choices:[{message:{content:'Read'},finish_reason:'stop'}]}));});

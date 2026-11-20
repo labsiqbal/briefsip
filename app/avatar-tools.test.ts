@@ -10,7 +10,7 @@ import sharp from 'sharp';
 import { startApp } from './test-bridge.ts';
 
 test('avatar tool scopes files, journals atomic changes and preserves user changes on restart', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-avatar-tool-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-avatar-tool-'));
   const png = await sharp({ create: { width: 32, height: 32, channels: 3, background: '#448866' } }).png().toBuffer();
   const generated = await sharp(randomBytes(512 * 512 * 3), { raw: { width: 512, height: 512, channels: 3 } }).png().toBuffer();
   assert(generated.length > 512 * 1024);

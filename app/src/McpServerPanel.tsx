@@ -1,3 +1,4 @@
+import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { copyText } from './ui/clipboard';
 import { getNonce } from 'get-nonce';
 import { usePolling } from './hooks/usePolling';
@@ -13,7 +14,7 @@ const scopeLabels: Partial<Record<Scope, string>> = {
   'machine:update': 'Update paired machines',
 };
 const scopeLabel = (id: Scope) => scopeLabels[id] ?? scopes.find(scope => scope.id === id)?.label ?? id;
-const path = '/api/mcp-server/peer-tokens', storage = 'briefsip:mcp-server-command';
+const path = '/api/mcp-server/peer-tokens', storage = 'minarbot:mcp-server-command';
 function restore(raw: string | null): Command | null {
   if (!raw) return null;
   const value = JSON.parse(raw), uuid = '[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}';
@@ -21,7 +22,7 @@ function restore(raw: string | null): Command | null {
   return value;
 }
 export function McpServerPanel({ request }: { request: <T>(path: string, body?: unknown) => Promise<T> }) {
-  const [recovery] = useState(() => { try { return { pending: restore(sessionStorage.getItem(storage)), invalid: false }; } catch { return { pending: null, invalid: true }; } });
+  const [recovery] = useState(() => { try { return { pending: restore(readProductStorage(sessionStorage, storage)), invalid: false }; } catch { return { pending: null, invalid: true }; } });
   const [pending, setPending] = useState(recovery.pending), [invalid, setInvalid] = useState(recovery.invalid);
   const [page, setPage] = useState<{ items: PeerToken[]; endpoint: string } | null>(null), [refresh, setRefresh] = useState(0);
   const [detailId, setDetailId] = useState('');
@@ -43,7 +44,7 @@ export function McpServerPanel({ request }: { request: <T>(path: string, body?: 
       restore(JSON.stringify(command)); sessionStorage.setItem(storage, JSON.stringify(command)); setPending(command);
       const result = await request<PeerToken & { token?: string; alreadyCreated?: boolean }>(command.path, command.body);
       if (!mounted.current) return;
-      sessionStorage.removeItem(storage); setPending(null); setShowForm(false); setName(''); setSelected(['agents:read']);
+      removeProductStorage(sessionStorage, storage); setPending(null); setShowForm(false); setName(''); setSelected(['agents:read']);
       setSecret(result.token ?? '');
       if (result.alreadyCreated) setNotice('Token was already created. Its secret cannot be recovered. Revoke it and create a replacement if you did not save it.');
       setRefresh(value => value + 1); heading.current?.focus();
@@ -52,7 +53,7 @@ export function McpServerPanel({ request }: { request: <T>(path: string, body?: 
   }
   async function discard() {
     if (!await confirm({ title: 'Discard the saved request?', description: 'The change may already have succeeded. Check the token list before creating a replacement.', confirm: 'Discard request', danger: true })) return;
-    try { sessionStorage.removeItem(storage); setPending(null); setInvalid(false); setRefresh(value => value + 1); } catch { setError('Browser storage could not be updated.'); }
+    try { removeProductStorage(sessionStorage, storage); setPending(null); setInvalid(false); setRefresh(value => value + 1); } catch { setError('Browser storage could not be updated.'); }
   }
   const recoveryNotice = <>
     {invalid && <Alert tone="error" title="Recovery unavailable" actions={<Button size="sm" onClick={() => void discard()}>Discard request</Button>} />}

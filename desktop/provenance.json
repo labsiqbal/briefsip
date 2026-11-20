@@ -9,7 +9,7 @@
       "localPath": "desktop/package.json",
       "revision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "32e0e102d0cb316c751abcb39b858d59236b19930ee4c93ba0b14f42a9561c32",
-      "adaptation": "Copy exact Electron/build/updater versions; standalone npm scripts, Briefsip identity and Linux AppImage-only packaging."
+      "adaptation": "Copy exact Electron/build/updater versions; standalone npm scripts, Minarbot identity and Linux AppImage-only packaging."
     },
     {
       "sourcePath": "scripts/build-desktop-artifact.ts",
@@ -37,7 +37,7 @@
       "localPath": "desktop/src/main.mjs",
       "revision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "cca0efb5053c52d9bdc907e8b482329c77182696aae2476e4c3303030a338728",
-      "adaptation": "Copy Electron single-instance lock adapter call; focus/restore Briefsip window on second launch."
+      "adaptation": "Copy Electron single-instance lock adapter call; focus/restore Minarbot window on second launch."
     },
     {
       "sourcePath": "apps/desktop/src/app/DesktopLifecycle.ts",
@@ -86,7 +86,7 @@
       "localPath": "desktop/src/settings.mjs",
       "revision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
       "sourceSha256": "5752874777777661c7bc55aedd0d7efb117939543056f8654e2cf06b5bbc3fdb",
-      "adaptation": "Copy windowFitsWithinDisplay and resolveInitialMainWindowBounds with one-pixel edge tolerance; validate numeric bounds, use Briefsip default size."
+      "adaptation": "Copy windowFitsWithinDisplay and resolveInitialMainWindowBounds with one-pixel edge tolerance; validate numeric bounds, use Minarbot default size."
     },
     {
       "sourcePath": "apps/desktop/src/settings/DesktopAppSettings.ts",

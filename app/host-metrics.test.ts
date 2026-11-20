@@ -7,7 +7,7 @@ import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 
 test('Rust host metrics cache samples, classify storage files and reject path overrides', async () => {
-  const httpDir = mkdtempSync(join(tmpdir(), 'briefsip-metrics-http-')), database = join(httpDir, 'state.sqlite');
+  const httpDir = mkdtempSync(join(tmpdir(), 'minarbot-metrics-http-')), database = join(httpDir, 'state.sqlite');
   const app = await startApp({ database });
   try {
     const db = testDatabase(database);

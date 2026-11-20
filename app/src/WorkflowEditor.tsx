@@ -1,3 +1,4 @@
+import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { useEffect, useRef, useState, type FormEvent, type SelectHTMLAttributes } from 'react';
 import { WorkflowGraph as GraphView } from './WorkflowGraph';
 import { ActionMenu, Alert, Button, Field, IconButton, Input, PageHeader, Select, Textarea, useConfirm, useField } from './ui/kit';
@@ -30,7 +31,7 @@ export function WorkflowEditor({ owner, agents, request, initial, saved, reload 
     return () => { stopped = true; };
   }, [owner.id, channelRefresh]);
   const [recovery, setRecovery] = useState(() => {
-    try { return { draft: restoreWorkflowEditorDraft(sessionStorage.getItem(draftKey)), invalid: false, held: pendingSave }; }
+    try { return { draft: restoreWorkflowEditorDraft(readProductStorage(sessionStorage, draftKey)), invalid: false, held: pendingSave }; }
     catch { return { draft: null, invalid: true, held: pendingSave }; }
   });
   const [draftConflict, setDraftConflict] = useState(!!recovery.draft && recovery.draft.revision !== (saved?.revision ?? 0));
@@ -54,9 +55,9 @@ export function WorkflowEditor({ owner, agents, request, initial, saved, reload 
   saveRef.current = onSave;
   async function submit(value: WorkflowDraft, automatic?: boolean) {
     let raw: string | null = null;
-    try { raw = sessionStorage.getItem(draftKey); } catch { /* The command path reports unavailable storage. */ }
+    try { raw = readProductStorage(sessionStorage, draftKey); } catch { /* The command path reports unavailable storage. */ }
     const accepted = await saveRef.current(value, automatic);
-    if (accepted) try { if (sessionStorage.getItem(draftKey) === raw) sessionStorage.removeItem(draftKey); } catch { /* Keep the recoverable draft if cleanup fails. */ }
+    if (accepted) try { if (readProductStorage(sessionStorage, draftKey) === raw) removeProductStorage(sessionStorage, draftKey); } catch { /* Keep the recoverable draft if cleanup fails. */ }
     return accepted;
   }
   const draft = workflowAutosaveDraft(name, graph, saved, new Set(agents.map(agent => agent.id)));
@@ -74,7 +75,7 @@ export function WorkflowEditor({ owner, agents, request, initial, saved, reload 
     if (pendingSave || recovery.held || recovery.invalid || draftConflict) return;
     try {
       if (dirty) sessionStorage.setItem(draftKey, JSON.stringify({ name, graph, revision: saved?.revision ?? 0 }));
-      else sessionStorage.removeItem(draftKey);
+      else removeProductStorage(sessionStorage, draftKey);
       setStorageError(false);
     } catch { setStorageError(true); }
   }, [name, graph, saved?.revision, dirty, draftKey, recovery.invalid, recovery.held, pendingSave, draftConflict]);
@@ -125,14 +126,14 @@ export function WorkflowEditor({ owner, agents, request, initial, saved, reload 
     <PageHeader headingRef={heading} title={initial ? 'Edit workflow' : 'New workflow'} description="Arrange steps and their next destinations. Approvals wait for your decision. Saved changes apply only to new runs." actions={<><Button variant="ghost" onClick={async () => { if (!dirty || await confirm({ title: 'Leave editor?', description: 'There are unsaved changes. Leave the editor?', confirm: 'Leave', danger: true })) onBack(); }}>Back</Button><Button type="submit" form="workflow-editor" variant="primary" disabled={locked}>Save workflow</Button></>} />
     {recovery.held && !pendingSave && <Alert tone="warn">The request has completed. Review the local draft before continuing to edit. <Button type="button" disabled={parentLocked} onClick={() => {
       try {
-        const local = restoreWorkflowEditorDraft(sessionStorage.getItem(draftKey));
+        const local = restoreWorkflowEditorDraft(readProductStorage(sessionStorage, draftKey));
         setRecovery({ draft: local, invalid: false, held: false });
         setDraftConflict(!!local && local.revision !== (saved?.revision ?? 0));
         if (local) { setName(local.name); setHistory(current => editWorkflowHistory(current, local.graph)); }
       } catch { setRecovery({ draft: null, invalid: true, held: false }); }
     }}>Review local draft</Button></Alert>}
     {storageError && <Alert tone="error">Draft has not been saved in the browser. Do not close the page before saving to the server.</Alert>}
-    {recovery.invalid && <Alert tone="error">Browser draft could not be read. <Button type="button" onClick={async () => { if (await confirm({ title: 'Discard the unreadable browser draft?', confirm: 'Discard draft', danger: true })) try { sessionStorage.removeItem(draftKey); setRecovery({ draft: null, invalid: false, held: false }); } catch { setStorageError(true); } }}>Discard browser draft</Button></Alert>}
+    {recovery.invalid && <Alert tone="error">Browser draft could not be read. <Button type="button" onClick={async () => { if (await confirm({ title: 'Discard the unreadable browser draft?', confirm: 'Discard draft', danger: true })) try { removeProductStorage(sessionStorage, draftKey); setRecovery({ draft: null, invalid: false, held: false }); } catch { setStorageError(true); } }}>Discard browser draft</Button></Alert>}
     {draftConflict && <Alert tone="warn">Draft is from an older revision. Load the latest version before saving; the draft graph remains available through Undo graph. <Button type="button" disabled={parentLocked} onClick={onReload}>Load latest version</Button></Alert>}
     {saved && <p className="k-field__hint" role="status">{locked ? 'Saving awaits confirmation or recovery.' : !dirty ? `Saved, version ${saved.revision}.` : draft ? attempted.current === stamp ? 'Changes have not been saved. Use Save workflow to try again.' : 'Changes save automatically after you stop typing.' : 'Complete the graph and name to save changes.'}</p>}
     <form id="workflow-editor" className="k-fieldset" onSubmit={event => void save(event)}><fieldset className="k-fieldset" disabled={locked}>

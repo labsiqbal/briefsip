@@ -59,7 +59,7 @@ function gate() {
 }
 
 test('room polling retains active members beyond full history and orders prose/tool/final by attempt', { timeout: 20000 }, async t => {
-  const directory = await mkdtemp(join(tmpdir(), 'briefsip-room-delivery-'));
+  const directory = await mkdtemp(join(tmpdir(), 'minarbot-room-delivery-'));
   const database = join(directory, 'db.sqlite');
   const tool = gate(), draftGate = gate(), answer = gate();
   const attemptStarted = gate(), nextMemberStarted = gate();
@@ -174,7 +174,7 @@ test('room polling retains active members beyond full history and orders prose/t
 });
 
 test('SSE delivers ordered persisted snapshots; reconnect repairs missed text without provider replay', { timeout: 15000 }, async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'briefsip-turn-stream-'));
+  const directory = await mkdtemp(join(tmpdir(), 'minarbot-turn-stream-'));
   let calls = 0, release: (() => void) | undefined;
   const provider = createServer(async (req, res) => {
     for await (const _ of req) { /* consume fixture request */ }

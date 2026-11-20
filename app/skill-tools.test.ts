@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 
 test('skill tools page own enabled pins, reject foreign access and observe revocation', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-skill-tools-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-skill-tools-'));
   let target = '', mode = 'list';
   let revoke: (() => Promise<unknown>) | undefined;
   const results: any[] = [];

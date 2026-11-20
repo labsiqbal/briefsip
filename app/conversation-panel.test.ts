@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { startApp } from './test-bridge.ts';
 
 test('conversation panel reads isolate files, previews, project folders and Git; revoked members lose access', async () => {
-  const root = mkdtempSync(resolve('node_modules/.panel-test-')), home = join(homedir(), `.briefsip-panel-test-${randomUUID()}`); mkdirSync(home);
+  const root = mkdtempSync(resolve('node_modules/.panel-test-')), home = join(homedir(), `.minarbot-panel-test-${randomUUID()}`); mkdirSync(home);
   const app = await startApp({ database: join(root,'app.sqlite'), projectRoot: join(home,'projects') });
   async function request(path: string, body?: unknown, status = 200, headers: Record<string,string> = {}): Promise<any> {
     const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json', ...headers }, body: body ? JSON.stringify(body) : undefined });

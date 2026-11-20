@@ -126,9 +126,9 @@ export async function widePanelsSmoke({ check, page, agentChat, visible, hidden,
       const sheet = page.getByRole('dialog', { name: 'Conversation panel', exact: true });
       if (await sheet.isVisible()) { await sheet.getByRole('button', { name: 'Close details', exact: true }).click(); await hidden(sheet); }
       await left.focus(); await page.keyboard.press('Home');
-      for (const [colorTheme, theme] of [['briefsip', 'dark'], ['briefsip', 'light'], ['catppuccin', 'dark']]) {
+      for (const [colorTheme, theme] of [['minarbot', 'dark'], ['minarbot', 'light'], ['catppuccin', 'dark']]) {
         dialog = await settings('Appearance');
-        await dialog.getByRole('button', { name: colorTheme === 'briefsip' ? 'Briefsip' : 'Catppuccin', exact: true }).click();
+        await dialog.getByRole('button', { name: colorTheme === 'minarbot' ? 'Minarbot' : 'Catppuccin', exact: true }).click();
         await dialog.getByRole('radio', { name: theme === 'dark' ? 'Dark' : 'Light', exact: true }).click();
         assert(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth + 1));
         await screenshot(`rs1-compact-settings-${colorTheme}-${theme}-${width}`);
@@ -139,7 +139,7 @@ export async function widePanelsSmoke({ check, page, agentChat, visible, hidden,
     }
     await page.setViewportSize(viewport); dialog = await settings('Appearance');
     await dialog.getByRole('radio', { name: 'Default', exact: true }).click();
-    await dialog.getByRole('button', { name: 'Briefsip', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Minarbot', exact: true }).click();
     await dialog.getByRole('radio', { name: 'Dark', exact: true }).click();
     await dialog.getByRole('button', { name: 'Close settings', exact: true }).click();
     await left.dblclick(); await openPanel(); await right.dblclick();

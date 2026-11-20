@@ -1,3 +1,4 @@
+import { readProductStorage } from '../rename-storage.ts';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { Separator } from 'radix-ui';
 import { clampPanelWidth, maxPanelWidth } from '../panel-width';
@@ -5,12 +6,12 @@ import { clampPanelWidth, maxPanelWidth } from '../panel-width';
 /** A side panel whose width the user drags, kept per browser. `edge` is where the handle sits. */
 export type PanelSpec = { key: string; label: string; edge: 'left' | 'right'; defaultWidth: number; minWidth: number };
 
-export const sidebarPanel: PanelSpec = { key: 'briefsip:sidebar-width', label: 'Resize sidebar', edge: 'right', defaultWidth: 300, minWidth: 240 };
-export const detailsPanel: PanelSpec = { key: 'briefsip:details-width', label: 'Resize details', edge: 'left', defaultWidth: 360, minWidth: 280 };
+export const sidebarPanel: PanelSpec = { key: 'minarbot:sidebar-width', label: 'Resize sidebar', edge: 'right', defaultWidth: 300, minWidth: 240 };
+export const detailsPanel: PanelSpec = { key: 'minarbot:details-width', label: 'Resize details', edge: 'left', defaultWidth: 360, minWidth: 280 };
 
 function readWidth(spec: PanelSpec) {
   try {
-    const saved = localStorage.getItem(spec.key);
+    const saved = readProductStorage(localStorage, spec.key);
     const value = saved?.trim() ? Number(saved) : NaN;
     return Number.isFinite(value) ? value : spec.defaultWidth;
   } catch {

@@ -1,10 +1,10 @@
-# Contributing to Briefsip
+# Contributing to Minarbot
 
 Thanks for helping. This guide covers setup, the checks every change must pass, and how to send a pull request.
 
 ## Find something to work on
 
-- Browse the [open issues](https://github.com/labsiqbal/briefsip/issues). Issues labeled `good first issue` are a gentle start, and `help wanted` marks work that is ready for anyone.
+- Browse the [open issues](https://github.com/minarbot/minarbot/issues). Issues labeled `good first issue` are a gentle start, and `help wanted` marks work that is ready for anyone.
 - Before you start, comment on the issue that you are taking it. One issue can have only one owner at a time, so this avoids duplicate work.
 - For a new feature or a large change, open an issue first so the approach can be agreed before you write code.
 
@@ -13,19 +13,19 @@ Thanks for helping. This guide covers setup, the checks every change must pass, 
 You need Linux x86_64, Node.js 22.23.4 or later, npm, Git, and a Rust toolchain with `rustfmt` and `clippy`.
 
 ```sh
-git clone https://github.com/labsiqbal/briefsip.git
-cd briefsip
+git clone https://github.com/minarbot/minarbot.git
+cd minarbot
 cargo build --workspace
 cd app
 npm ci
 npm run build
 ```
 
-To run your build, start `cargo run --release -p briefsip-server` from the repository root and open <http://127.0.0.1:4317>. Use `PORT` and `BRIEFSIP_DATA_DIR` to keep a development instance apart from one you use day to day.
+To run your build, start `cargo run --release -p minarbot-server` from the repository root and open <http://127.0.0.1:4317>. Use `PORT` and `MINARBOT_DATA_DIR` to keep a development instance apart from one you use day to day.
 
 ## Checks
 
-Run these before you open a pull request. Continuous integration runs the same checks once it lands ([#13](https://github.com/labsiqbal/briefsip/issues/13)).
+Run these before you open a pull request. Continuous integration runs the same checks once it lands ([#13](https://github.com/minarbot/minarbot/issues/13)).
 
 From the repository root:
 
@@ -68,4 +68,4 @@ By contributing, you agree that your contribution is licensed under the [Apache 
 
 ## Reporting bugs and ideas
 
-Use the issue templates. For a bug, include the Briefsip version (shown in Settings > Updates), what you did, what you expected, and what happened. Security problems go through [SECURITY.md](SECURITY.md), not public issues.
+Use the issue templates. For a bug, include the Minarbot version (shown in Settings > Updates), what you did, what you expected, and what happened. Security problems go through [SECURITY.md](SECURITY.md), not public issues.

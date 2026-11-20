@@ -9,7 +9,7 @@ import { startApp } from './test-bridge.ts';
 import { restoreWorkspace } from './test-support/backup.ts';
 
 test('shared data agent tools journal once across resume, user reads/drop and restored workspace retain data', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-data-http-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-data-http-'));
   let fail = false;
   const provider = createServer(async (req, res) => {
     const chunks = []; for await (const chunk of req) chunks.push(chunk);
@@ -57,6 +57,6 @@ test('shared data agent tools journal once across resume, user reads/drop and re
     await app.close(); const restored = join(dir, 'restored.sqlite'); restoreWorkspace(backupPath, restored); app = await startApp({ ...options, database: restored });
     const restoredList = await get('/api/data'); assert.equal(restoredList.tables[0].owner, a.id);
     assert.deepEqual((await post('/api/data/query', { id: randomUUID(), revision: restoredList.revision, sql: 'SELECT * FROM things' })).rows, [[1, 'saved once']]);
-    await post('/api/data/drop', { id: randomUUID(), revision: restoredList.revision, table: 'briefsip_owners' }, 400);
+    await post('/api/data/drop', { id: randomUUID(), revision: restoredList.revision, table: 'minarbot_owners' }, 400);
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });

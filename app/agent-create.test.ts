@@ -17,7 +17,7 @@ test('creation recovery keeps exact command and rejects malformed authority', ()
 });
 
 test('prompt creation atomically queues one restricted setup and recovers without duplicate work', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-create-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-create-'));
   let mode = 'normal', calls = 0, edits = 0, continued = false;
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
@@ -75,7 +75,7 @@ import { canonicalHttp } from './test-support/canonical-http.ts';
 import sharp from 'sharp';
 
 function canonicalFixture() {
-  const f = canonicalHttp('briefsip-agent-create-');
+  const f = canonicalHttp('minarbot-agent-create-');
   const { db, owner } = f;
   const member = f.addAccount('user_member'), foreign = f.addAccount('user_foreign');
   function enroll(actor = owner, capabilities = ['execution']) {

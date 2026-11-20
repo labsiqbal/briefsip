@@ -21,7 +21,7 @@ function code(work: () => unknown, expected: string) { assert.throws(work, e => 
 function fixture(t: test.TestContext) {
   const db = testDatabase(':memory:'); initializeHubSchema(db); t.after(() => db.close());
   let clock = 1_800_000_000_000;
-  const a = createHubAuthority(db, { domain: 'briefsip.test', mailboxKey: key, now: () => clock });
+  const a = createHubAuthority(db, { domain: 'minarbot.test', mailboxKey: key, now: () => clock });
   const r = createHubRouting(a);
   const ids = Object.fromEntries(['alice','bob','carol','dave','eve'].map(s => [s, a.provisionAccount(identity(s), true)]));
   const alpha = a.createProject(ids.alice, 'alpha', 'Alpha'), beta = a.createProject(ids.bob, 'beta', 'Beta');
@@ -75,7 +75,7 @@ test('UUID/slug binding is immutable, exact, reserved and tombstoned; cross-proj
   const f = fixture(t); f.join('bob');
   assert.match(f.alpha.projectId, /^[0-9a-f-]{36}$/); assert(Object.isFrozen(f.ctx('alice')));
   for (const value of ['accounts','api','www','admin','status','assets','UPPER','a','-alpha','alpha-','alpha.beta','alpha:443','équipe']) code(() => slug(value), 'invalid_slug');
-  for (const host of ['ALPHA.briefsip.test','alpha.briefsip.test:443','alpha.briefsip.test.','unknown.briefsip.test','alpha.briefsip.test@evil.test']) code(() => f.a.resolveProject(host, f.ids.alice), 'resource_not_found');
+  for (const host of ['ALPHA.minarbot.test','alpha.minarbot.test:443','alpha.minarbot.test.','unknown.minarbot.test','alpha.minarbot.test@evil.test']) code(() => f.a.resolveProject(host, f.ids.alice), 'resource_not_found');
   code(() => f.a.resolveProject(f.alpha.host, f.ids.bob, f.beta.projectId), 'resource_not_found');
   code(() => f.a.section(f.ctx('bob'), f.beta.sectionId), 'resource_not_found');
   assert.throws(() => f.db.prepare("UPDATE projects SET slug='changed' WHERE id=?").run(f.alpha.projectId), /immutable/);
@@ -96,7 +96,7 @@ test('identity verifier is pluggable, mailbox is not identity, pilot admission i
   code(() => f.a.createProject(unadmitted, 'private', 'No'), 'account_unavailable');
   const unknown: IdentityVerifier = { async verify() { return identity('unknown'); } };
   await assert.rejects(f.a.authenticate(unknown, 'stub'), e => e instanceof ProtocolError && e.code === 'account_unavailable');
-  assert.throws(() => createHubAuthority(f.db, { domain: 'briefsip.test', mailboxKey: new Uint8Array(1) }));
+  assert.throws(() => createHubAuthority(f.db, { domain: 'minarbot.test', mailboxKey: new Uint8Array(1) }));
 });
 
 test('invites bind mailbox/account/project, store hashes, expire within 24h and consume exactly once', t => {
@@ -364,7 +364,7 @@ test('migration v0 fixture initializes atomically, checksum/future/foreign datab
 });
 
 test('exclusive writer/WAL, consistent backup/reopen and restore generation fence invitations and unfinished work', async t => {
-  const dir=mkdtempSync(resolve(tmpdir(),'briefsip-hub-')), handles: ReturnType<typeof openHubDatabase>[]=[]; t.after(()=>{ for(const handle of handles) handle.close(); rmSync(dir,{recursive:true,force:true}); });
+  const dir=mkdtempSync(resolve(tmpdir(),'minarbot-hub-')), handles: ReturnType<typeof openHubDatabase>[]=[]; t.after(()=>{ for(const handle of handles) handle.close(); rmSync(dir,{recursive:true,force:true}); });
   const file=resolve(dir,'hub.sqlite'), original=openHubDatabase(file); handles.push(original);
   assert.equal(original.db.prepare('PRAGMA journal_mode').get()!.journal_mode,'wal'); assert.equal(original.db.prepare('PRAGMA foreign_keys').get()!.foreign_keys,1);
   assert.throws(()=>openHubDatabase(file),/EEXIST/);
@@ -372,7 +372,7 @@ test('exclusive writer/WAL, consistent backup/reopen and restore generation fenc
   assert.equal(competitor.status, 0, competitor.stderr);
   const alias=resolve(dir,'alias.sqlite'); symlinkSync(file,alias); assert.throws(()=>openHubDatabase(alias),/aliases/);
   const hard=resolve(dir,'hard.sqlite'); linkSync(file,hard); assert.throws(()=>openHubDatabase(hard),/hard links/); unlinkSync(hard);
-  const a=createHubAuthority(original.db,{domain:'briefsip.test',mailboxKey:key}),r=createHubRouting(a),alice=a.provisionAccount(identity('alice'),true),bob=a.provisionAccount(identity('bob'),true),p=a.createProject(alice,'alpha','Alpha'),ctx=a.resolveProject(p.host,alice);
+  const a=createHubAuthority(original.db,{domain:'minarbot.test',mailboxKey:key}),r=createHubRouting(a),alice=a.provisionAccount(identity('alice'),true),bob=a.provisionAccount(identity('bob'),true),p=a.createProject(alice,'alpha','Alpha'),ctx=a.resolveProject(p.host,alice);
   const invite=a.invite(ctx,{mailbox:'bob@example.com',role:'member',expiresAt:Date.now()+10000});
   const nodeId=a.registerNode(alice,{id:randomUUID(),installationId:randomUUID(),signingPublicKey,encryptionPublicKey,capabilities:['chat']}),principal=a.connectNode(alice,nodeId,1),agent=a.registerAgent(alice,nodeId,randomUUID(),'Alice');
   const policy:ParticipationPolicy={sectionIds:[p.sectionId],invocation:{mode:'owner'},scopes:['read','invoke'],localPolicyDigest:sha256('x'),payerBindingRef:'local',maxCostMicros:1};
@@ -383,7 +383,7 @@ test('exclusive writer/WAL, consistent backup/reopen and restore generation fenc
   const reopened=openHubDatabase(file); assert.equal(reopened.db.prepare('SELECT text FROM messages').get()!.text,'Persisted'); reopened.close();
   const restored=openHubDatabase(backup); handles.push(restored); initializeHubSchema(restored.db);
   const before=String(restored.db.prepare('SELECT authority_generation FROM hub_state').get()!.authority_generation),generation=fenceRestoredHub(restored.db); assert.notEqual(generation,before);
-  const ra=createHubAuthority(restored.db,{domain:'briefsip.test',mailboxKey:key}),rr=createHubRouting(ra);
+  const ra=createHubAuthority(restored.db,{domain:'minarbot.test',mailboxKey:key}),rr=createHubRouting(ra);
   code(()=>ra.resolveProject(p.host,alice),'authority_unavailable'); assert.throws(()=>activateRestoredHub(restored.db,before),/generation/); activateRestoredHub(restored.db,generation);
   assert.equal(rr.turn(ra.resolveProject(p.host,alice),posted.turnIds[0]).state,'unknown');
   assert.equal(restored.db.prepare('SELECT count(*) AS n FROM outbox').get()!.n,0);

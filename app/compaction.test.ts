@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 
 test('incremental compaction keeps source scopes, originals, provenance and failure fallback', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-compaction-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-compaction-'));
   let fail = false, hold = false, held = false, channelRecipient = '';
   const summaries: any[] = [], prompts: string[] = [];
   const provider = createServer(async (req, res) => {
@@ -83,7 +83,7 @@ test('incremental compaction keeps source scopes, originals, provenance and fail
 });
 
 test('Rust compaction fences stale responses, changed sources, cancelled turns and future watermarks', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-compaction-fences-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-compaction-fences-'));
   const database = join(directory, 'state.sqlite');
   let held: ServerResponse | undefined, summaryCalls = 0, deferSummary = false;
   let lastPrompt = '';

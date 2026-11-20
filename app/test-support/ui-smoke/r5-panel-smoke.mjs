@@ -140,7 +140,7 @@ export async function r5PanelSmoke({ check, page, origin, root, agentChat, setti
       document.querySelector('.chat .transcript').append(prose);
     });
     try {
-      for (const palette of ['briefsip', 'github', 'catppuccin', 'everforest', 'solarized', 'midnight']) for (const mode of ['light', 'dark']) {
+      for (const palette of ['minarbot', 'github', 'catppuccin', 'everforest', 'solarized', 'midnight']) for (const mode of ['light', 'dark']) {
         await page.evaluate(({ palette, mode }) => Object.assign(document.documentElement.dataset, { colorTheme: palette, theme: mode }), { palette, mode });
         const link = page.locator('#r5-link-fixture a'); await link.scrollIntoViewIfNeeded();
         const style = await link.evaluate(el => { const s = getComputedStyle(el); return { decoration: s.textDecorationLine, color: s.color, body: getComputedStyle(el.parentElement).color }; });

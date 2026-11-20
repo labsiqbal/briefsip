@@ -135,10 +135,10 @@ export async function polishSmoke({ check, page, origin, root, agentChat, provid
       await page.getByRole('button', { name: 'Help', exact: true }).click();
       await page.getByRole('heading', { name: 'Keyboard shortcuts', exact: true }).waitFor();
       assert(await page.locator('.help-page .k-row__title').evaluateAll(rows => rows.every(row => row.scrollWidth <= row.clientWidth)));
-      assert.equal(await page.getByText('How Briefsip works', { exact: true }).count(), 0); await shot('R2-32-help'); await page.keyboard.press('Escape');
+      assert.equal(await page.getByText('How Minarbot works', { exact: true }).count(), 0); await shot('R2-32-help'); await page.keyboard.press('Escape');
       await choose('Settings General'); const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
       await settings.getByRole('heading', { name: 'General', exact: true }).waitFor();
-      if (!directory.hubAvailable) assert.equal(await settings.getByRole('button', { name: 'briefsip.com', exact: true }).count(), 0);
+      if (!directory.hubAvailable) assert.equal(await settings.getByRole('button', { name: 'minarbot.com', exact: true }).count(), 0);
       const voices = await page.evaluate(() => typeof speechSynthesis !== 'undefined' ? speechSynthesis.getVoices().filter(v => v.localService).length : 0);
       if (!voices) assert.equal(await settings.getByRole('switch', { name: 'Read aloud', exact: true }).count(), 0);
       await shot('R2-33-general');

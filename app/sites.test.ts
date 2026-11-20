@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 
 test('local sites retain URLs, isolate owners, reject stale writes and recover without resurrection', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-sites-')), options = { database: join(directory, 'test.sqlite'), port: 0 };
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-sites-')), options = { database: join(directory, 'test.sqlite'), port: 0 };
   let app = await startApp(options);
   async function request(path: string, body?: unknown, expected = 200) {
     const response = await fetch(app.origin + path, { method: body === undefined ? 'GET' : 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });

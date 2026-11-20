@@ -7,12 +7,12 @@ export function configureUpdates({ updater, enabled, prompt, log = console.warn,
   let checking = null;
   let downloaded = false;
   let prompting = false;
-  const reportError = () => log('Briefsip desktop update failed. Retry from the app menu.');
+  const reportError = () => log('Minarbot desktop update failed. Retry from the app menu.');
   const offerRestart = async () => {
     if (prompting) return;
     prompting = true;
     try {
-      if (await prompt({ title: 'Update ready', message: 'Briefsip update downloaded.', buttons: ['Restart to update', 'Later'], defaultId: 1, cancelId: 1 }) === 0) updater.quitAndInstall(false, true);
+      if (await prompt({ title: 'Update ready', message: 'Minarbot update downloaded.', buttons: ['Restart to update', 'Later'], defaultId: 1, cancelId: 1 }) === 0) updater.quitAndInstall(false, true);
     } catch { reportError(); } finally { prompting = false; }
   };
   updater.on('error', reportError);
@@ -27,7 +27,7 @@ export function configureUpdates({ updater, enabled, prompt, log = console.warn,
     try {
       checking ??= updater.checkForUpdates().finally(() => { checking = null; });
       const result = await checking;
-      if (manual) await prompt({ title: 'Updates', message: result?.isUpdateAvailable ? 'Update found. Downloading in the background.' : 'Briefsip is up to date.', buttons: ['OK'] });
+      if (manual) await prompt({ title: 'Updates', message: result?.isUpdateAvailable ? 'Update found. Downloading in the background.' : 'Minarbot is up to date.', buttons: ['OK'] });
     } catch { if (manual) await prompt({ title: 'Update check failed', message: 'Could not check for updates on GitHub. Try again later.', buttons: ['OK'] }); }
   }
   let interval;

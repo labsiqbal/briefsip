@@ -95,7 +95,7 @@ try {
     assert.equal((await api(`/api/channels/${project.channel}/turns`)).filter(turn => turn.room?.active).length, 0);
   }
   await page.getByRole('button', { name: /^Settings(?: - Update available)?$/ }).click();
-  await page.getByRole('button', { name: 'briefsip.com', exact: true }).click();
+  await page.getByRole('button', { name: 'minarbot.com', exact: true }).click();
   await page.waitForTimeout(300);
   await shot('UX-40');
   if (verify) {

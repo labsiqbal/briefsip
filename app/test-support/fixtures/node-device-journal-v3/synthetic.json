@@ -24,9 +24,9 @@
     }
   },
   "keyring": {
-    "briefsip/installation/adc14b35-efd9-4b1e-b098-0e8e48b2528d/installation": "MC4CAQAwBQYDK2VwBCIEIC3ZfMAxatqtG6y0VGBcOBAP7-805SvIYfXldX1Wo6wh",
-    "briefsip/installation/adc14b35-efd9-4b1e-b098-0e8e48b2528d/signing/27f7b95f-166f-4349-b9e0-c5249449d032": "MC4CAQAwBQYDK2VwBCIEIFr94nufPuhCf3T7DJ3YxfPs43zosD-KdmQr4k7Jxinl",
-    "briefsip/installation/adc14b35-efd9-4b1e-b098-0e8e48b2528d/encryption/c75c6e91-2e65-4d17-802d-730fefeae091": "MC4CAQAwBQYDK2VuBCIEIMhxrXqd2NBxN5UA969nMt8WXSce5hGrWUDTT5cgnB5T"
+    "minarbot/installation/adc14b35-efd9-4b1e-b098-0e8e48b2528d/installation": "MC4CAQAwBQYDK2VwBCIEIC3ZfMAxatqtG6y0VGBcOBAP7-805SvIYfXldX1Wo6wh",
+    "minarbot/installation/adc14b35-efd9-4b1e-b098-0e8e48b2528d/signing/27f7b95f-166f-4349-b9e0-c5249449d032": "MC4CAQAwBQYDK2VwBCIEIFr94nufPuhCf3T7DJ3YxfPs43zosD-KdmQr4k7Jxinl",
+    "minarbot/installation/adc14b35-efd9-4b1e-b098-0e8e48b2528d/encryption/c75c6e91-2e65-4d17-802d-730fefeae091": "MC4CAQAwBQYDK2VuBCIEIMhxrXqd2NBxN5UA969nMt8WXSce5hGrWUDTT5cgnB5T"
   },
   "samples": [
     {

@@ -8,7 +8,7 @@ import {rustBinary} from './rust-binary.ts';
 import {parseSkillFiles,skillFileBytes} from './shared/skill-files.ts';
 import {writeSkillZip,readSkillZip} from './shared/skill-zip.ts';
 
-const binary = () => rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
+const binary = () => rustBinary('minarbot-server', process.env.MINARBOT_RUST_BINARY);
 const command = (...args: string[]) => spawnSync(binary(), ['skills', ...args], { encoding: 'utf8' });
 function skills(...args: string[]) {
  const result = command(...args);
@@ -19,7 +19,7 @@ const discoverSkillDirectories = (path: string): { directory: string; status: st
 const exportSkillDirectory = (source: string, output: string) => skills('export', source, output);
 
 test('local skill discovery and export retain bytes without activation or source changes',async()=>{
- const root=mkdtempSync(join(tmpdir(),'briefsip-skill-directory-')),library=join(root,'library'),source=join(library,'fixture-skill');
+ const root=mkdtempSync(join(tmpdir(),'minarbot-skill-directory-')),library=join(root,'library'),source=join(library,'fixture-skill');
  mkdirSync(library);mkdirSync(source);mkdirSync(join(source,'assets'));
  const markdown='---\nname: fixture-skill\ndescription: Synthetic local package\n---\nUse assets/example.txt as reference.\n';
  writeFileSync(join(source,'SKILL.md'),markdown);writeFileSync(join(source,'assets','example.txt'),'Exact text\r\n');writeFileSync(join(source,'assets','binary.dat'),Buffer.from([0,255,13,10]));
@@ -27,7 +27,7 @@ test('local skill discovery and export retain bytes without activation or source
  try{
   const before=readdirSync(source),listed=discoverSkillDirectories(library);assert.equal(listed.length,1);assert.equal(listed[0].status,'valid');assert.equal(listed[0].files,4);
   const output=join(root,'package.json');exportSkillDirectory(source,output);assert.equal(statSync(output).mode&0o777,0o600);
-  const bundle=JSON.parse(readFileSync(output,'utf8'));assert.equal(bundle.format,'briefsip-skill-folder');assert.equal(bundle.version,1);
+  const bundle=JSON.parse(readFileSync(output,'utf8'));assert.equal(bundle.format,'minarbot-skill-folder');assert.equal(bundle.version,1);
   const files=parseSkillFiles(bundle.files).files;assert.deepEqual(Buffer.from(skillFileBytes(files.find(f=>f.path==='assets/binary.dat')!)),Buffer.from([0,255,13,10]));
   assert.equal(files.find(f=>f.path==='assets/example.txt')!.content,'Exact text\r\n');assert.deepEqual(await readSkillZip(writeSkillZip(files)),files);
   assert(!readdirSync(root).includes('executed'));assert.deepEqual(readdirSync(source),before);assert.equal(readFileSync(join(source,'SKILL.md'),'utf8'),markdown);
@@ -44,7 +44,7 @@ test('local skill discovery and export retain bytes without activation or source
 });
 
 test('local skill directory bounds fail without publishing partial packages',()=>{
- const root=mkdtempSync(join(tmpdir(),'briefsip-skill-limits-')),source=join(root,'limits');mkdirSync(source);writeFileSync(join(source,'SKILL.md'),'---\nname: limits\ndescription: Limits\n---\nReference.');
+ const root=mkdtempSync(join(tmpdir(),'minarbot-skill-limits-')),source=join(root,'limits');mkdirSync(source);writeFileSync(join(source,'SKILL.md'),'---\nname: limits\ndescription: Limits\n---\nReference.');
  try{
   writeFileSync(join(source,'large.bin'),Buffer.alloc(2*1024*1024+48001));const output=join(root,'out.json');assert.throws(()=>exportSkillDirectory(source,output),/package size limit/);assert(!readdirSync(root).includes('out.json'));rmSync(join(source,'large.bin'));
   for(let i=0;i<32;i++)writeFileSync(join(source,`file-${i}.txt`),'text');assert.throws(()=>exportSkillDirectory(source,join(root,'check.json')),/32 file/);
@@ -52,7 +52,7 @@ test('local skill directory bounds fail without publishing partial packages',()=
 });
 
 test('discovery refuses swapped child links and export resolves selected root once',()=>{
- const root=mkdtempSync(join(tmpdir(),'briefsip-skill-race-')),library=join(root,'library'),outside=join(root,'outside'),source=join(library,'sample'),alias=join(root,'selected');
+ const root=mkdtempSync(join(tmpdir(),'minarbot-skill-race-')),library=join(root,'library'),outside=join(root,'outside'),source=join(library,'sample'),alias=join(root,'selected');
  mkdirSync(library);mkdirSync(outside);mkdirSync(source);writeFileSync(join(source,'SKILL.md'),'---\nname: sample\ndescription: Source\n---\nUse source.');
  mkdirSync(join(outside,'sample'));writeFileSync(join(outside,'sample','SKILL.md'),'---\nname: sample\ndescription: Outside\n---\nDo not import.');symlinkSync(source,alias);
  try{
@@ -64,11 +64,11 @@ test('discovery refuses swapped child links and export resolves selected root on
 });
 
 test('failed CLI writes leave no final export and retry succeeds',()=>{
- const root=mkdtempSync(join(tmpdir(),'briefsip-skill-write-')),source=join(root,'sample'),output=join(root,'out.json');mkdirSync(source);
+ const root=mkdtempSync(join(tmpdir(),'minarbot-skill-write-')),source=join(root,'sample'),output=join(root,'out.json');mkdirSync(source);
  writeFileSync(join(source,'SKILL.md'),'---\nname: sample\ndescription: Write failure\n---\n'+'x'.repeat(3000));
  try{
   const result=spawnSync('bash',['-c','trap "" XFSZ; ulimit -f 1; exec "$@"','skill-export-test',binary(),'skills','export',source,output],{cwd:import.meta.dirname,encoding:'utf8'});
   assert.equal(result.status,1,result.stderr);assert.match(result.stderr,/File too large/);assert.deepEqual(readdirSync(root),['sample']);
-  exportSkillDirectory(source,output);assert.equal(JSON.parse(readFileSync(output,'utf8')).format,'briefsip-skill-folder');
+  exportSkillDirectory(source,output);assert.equal(JSON.parse(readFileSync(output,'utf8')).format,'minarbot-skill-folder');
  }finally{rmSync(root,{recursive:true,force:true});}
 });

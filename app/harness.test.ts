@@ -8,12 +8,12 @@ import type { DatabaseSync } from 'node:sqlite';
 import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 import type { HarnessRuntime } from './shared/runtime.ts';
-process.env.BRIEFSIP_HARNESS_CANARY = 'never-inherit-this-canary';
+process.env.MINARBOT_HARNESS_CANARY = 'never-inherit-this-canary';
 const fakeSource = readFileSync(new URL('./fixtures/fake-harness.mjs', import.meta.url), 'utf8');
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 function executable(directory: string) { const path = join(directory,'fake-harness'); writeFileSync(path, `#!${process.execPath}\n` + fakeSource.split('\n').slice(1).join('\n')); chmodSync(path,0o700); return path; }
 async function fixture(runtime: HarnessRuntime, write = true, room = false) {
-  const directory = mkdtempSync(join(room ? join(import.meta.dirname,'node_modules') : tmpdir(),'briefsip-harness-')), workspace = join(directory,'workspace'); mkdirSync(workspace);
+  const directory = mkdtempSync(join(room ? join(import.meta.dirname,'node_modules') : tmpdir(),'minarbot-harness-')), workspace = join(directory,'workspace'); mkdirSync(workspace);
   const binary = executable(directory), agent = randomUUID(), minted: {agent: string;turn: string;id: string}[] = [], revoked: string[] = [];
   if(room)mkdirSync(join(directory,'state'));
   const options = { baseURL: 'http://127.0.0.1:1/v1', database:join(directory,room?'state/db.sqlite':'db.sqlite'), port:0, timeout:10_000, workspaces:[{agent,directory:workspace,write}], harness: { executables:{codex:binary,claude:binary}, issuer:{ mintAgentSession(input: {agent:string;turn:string}) { const id=randomUUID(); minted.push({...input,id});return {id,token:'test-mcp-session-token'}; }, revokeAgentSession(id:string) { revoked.push(id); } } } };

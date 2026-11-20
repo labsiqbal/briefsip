@@ -15,7 +15,7 @@ async function check(code, file, rule) {
   else assert.equal(result.errorCount, 0, `${file}: ${code}\n${JSON.stringify(result.messages)}`);
   checks++;
 }
-const boundary = 'briefsip/client-server-boundary', builtin = '@typescript-eslint/no-restricted-imports';
+const boundary = 'minarbot/client-server-boundary', builtin = '@typescript-eslint/no-restricted-imports';
 for (const [file, prefix] of [['src/lint-probe.ts', '../'], ['src/hub/lint-probe.ts', '../../'], ['src/ui/lint-probe.ts', '../../']]) {
   for (const code of ["import fs from 'node:fs';", "import 'fs';", "import 'fs?raw';", "export * from 'fs/promises';", "import { type Stats, readFile } from 'fs';"])
     await check(code, file, builtin);
@@ -45,7 +45,7 @@ await check("import { parseDocument } from 'yaml';", 'shared/skill-files.ts');
 await check('debugger;', 'hub/probe.ts', 'no-debugger');
 await check('function probe() { return; throw new Error(); }', 'server.ts', 'no-unreachable');
 
-const commentRule = 'briefsip/comments', commentStart = checks;
+const commentRule = 'minarbot/comments', commentStart = checks;
 for (const file of ['server.ts', 'hub/probe.ts', 'src/lint-probe.tsx']) {
   for (const [open, close] of [['// ', ''], ['/* ', ' */'], ['/** ', ' */']]) {
     await check(open + 'x'.repeat(120 - open.length - close.length) + close, file);
@@ -83,7 +83,7 @@ await check('// Separate opt-in check; ' + 'x'.repeat(121), 'server.ts', comment
 console.log(`Comment rules: ${checks - commentStart} assertions passed.`);
 
 // #38: exercise the ratchets without applying the existing bulk suppressions.
-const timerRule = 'no-restricted-globals', effectRule = 'briefsip-lifecycle/no-component-effects', anyRule = '@typescript-eslint/no-explicit-any';
+const timerRule = 'no-restricted-globals', effectRule = 'minarbot-lifecycle/no-component-effects', anyRule = '@typescript-eslint/no-explicit-any';
 for (const timer of ['setTimeout', 'setInterval', 'requestAnimationFrame', 'requestIdleCallback']) {
   for (const code of [`${timer}(() => {});`, `const later = ${timer};`, `window.${timer}(() => {});`, `self['${timer}'](() => {});`, `globalThis.${timer}(() => {});`])
     await check(code, 'src/lifecycle-probe.tsx', timerRule);

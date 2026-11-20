@@ -11,7 +11,7 @@ import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 
 test('Telegram question buttons answer the owning task once across restart and lost responses',async()=>{
-  const root=mkdtempSync(join(tmpdir(),'briefsip-question-buttons-')),agent=randomUUID(),providerAnswers:string[]=[];
+  const root=mkdtempSync(join(tmpdir(),'minarbot-question-buttons-')),agent=randomUUID(),providerAnswers:string[]=[];
   const choices=Array.from({length:8},(_,i)=>`${i+1} ${'Long choice '.repeat(10)}${i}`);
   let sequence=0,free=false;
   const provider=createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;const data=JSON.parse(raw),answer=data.messages.findLast((item:any)=>item.role==='tool');if(answer)providerAnswers.push(JSON.parse(answer.content).answer);res.end(JSON.stringify({choices:[{finish_reason:answer?'stop':'tool_calls',message:answer?{content:'Answered '+JSON.parse(answer.content).answer}:{tool_calls:[{id:'question',type:'function',function:{name:'ask_user',arguments:JSON.stringify({question:'Choose',choices:free?[]:choices})}}]}}]}));});
@@ -74,7 +74,7 @@ test('Telegram question buttons answer the owning task once across restart and l
 });
 
 test('Telegram offline recovery preserves sent parts and rejects repeated operator decisions', async () => {
-  const root=mkdtempSync(join(tmpdir(),'briefsip-telegram-recovery-')),id=randomUUID(),calls:any[]=[];
+  const root=mkdtempSync(join(tmpdir(),'minarbot-telegram-recovery-')),id=randomUUID(),calls:any[]=[];
   let lost=true;
   const fixture=await connectorApp('telegram',root,randomUUID(),{remote:(_method,raw,req)=>{
     const body=JSON.parse(raw.toString());calls.push(body);
@@ -112,7 +112,7 @@ test('Telegram offline recovery preserves sent parts and rejects repeated operat
 });
 
 test('Telegram bridge submits once through granted side-thread API and isolates main history', async () => {
-  const root=mkdtempSync(join(tmpdir(),'briefsip-telegram-')),agent=randomUUID();
+  const root=mkdtempSync(join(tmpdir(),'minarbot-telegram-')),agent=randomUUID();
   let calls=0,parts=0;
   const provider=createServer(async(req,res)=>{for await(const _ of req){}calls++;res.end(JSON.stringify({choices:[{finish_reason:'stop',message:{content:'Synthetic reply'}}]}));});
   await new Promise<void>(resolve=>provider.listen(0,'127.0.0.1',resolve));
@@ -156,7 +156,7 @@ test('Telegram bridge submits once through granted side-thread API and isolates 
 test('Rust Telegram runner rejects a mismatched bot identity and releases its journal lock', async () => {
   const {mkdtempSync,rmSync,existsSync} = await import('node:fs');
   const {tmpdir}=await import('node:os');const {join}=await import('node:path');
-  const root=mkdtempSync(join(tmpdir(),'briefsip-telegram-lock-'));
+  const root=mkdtempSync(join(tmpdir(),'minarbot-telegram-lock-'));
   const server=createServer((_req,res)=>res.end(JSON.stringify({ok:true,result:{id:124,is_bot:true}})));
   await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));const address=server.address();assert(address&&typeof address!=='string');
   try{
@@ -168,7 +168,7 @@ test('Rust Telegram runner rejects a mismatched bot identity and releases its jo
 for(const ask of [false,true])test(`Telegram runner ${ask?'answers a question':'replies directly'} and releases owned journal on shutdown`,async()=>{
   const {mkdtempSync,rmSync,existsSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
   const {startApp}=await import('./test-bridge.ts');
-  const root=mkdtempSync(join(tmpdir(),'briefsip-telegram-run-')),agent=randomUUID(),controller=new AbortController();
+  const root=mkdtempSync(join(tmpdir(),'minarbot-telegram-run-')),agent=randomUUID(),controller=new AbortController();
   let modelCalls=0,delivered=0;let answerUpdate:any;const offsets:number[]=[];
   const provider=createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;const data=JSON.parse(raw);modelCalls++;const question=ask&&!data.messages.some((message:any)=>message.role==='tool');res.end(JSON.stringify({choices:[{finish_reason:question?'tool_calls':'stop',message:question?{tool_calls:[{id:'question',type:'function',function:{name:'ask_user',arguments:JSON.stringify({question:'Proceed?',choices:['Yes','No']})}}]}:{content:'Runner reply'}}]}));});
   const telegram=createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;const body=JSON.parse(raw);let result:any;

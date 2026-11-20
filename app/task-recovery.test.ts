@@ -22,7 +22,7 @@ import { rustTaskTestBridge } from './rust-task-test-bridge.ts';
 import { startRustServer } from './rust-test-server.ts';
 
 async function fixture(tools = ['transfer_task'], testPathPrefix?: string) {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-recovery-rust-')), database = join(directory, 'canonical.sqlite');
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-recovery-rust-')), database = join(directory, 'canonical.sqlite');
   const db = testDatabase(database); installFrozenNodeSchema(db);
   // Keep human JWTs valid through host stalls while wait-expiry tests use the real clock.
   const expiresAt = Date.now() + 60 * 60_000;
@@ -400,7 +400,7 @@ test('canonical wait maintenance survives SQLite failure and retries after stora
 });
 
 test('disaster restore closes pending provisions and activated wait references while keeping receipts', async () => {
-  const f = await canonicalTaskTools(['wait_for_event']), directory = mkdtempSync(join(tmpdir(), 'briefsip-protected-wait-restore-'));
+  const f = await canonicalTaskTools(['wait_for_event']), directory = mkdtempSync(join(tmpdir(), 'minarbot-protected-wait-restore-'));
   let snapshot: Awaited<ReturnType<typeof workspaceSnapshot>> | undefined;
   try {
     for (const activated of [false, true]) {
@@ -413,7 +413,7 @@ test('disaster restore closes pending provisions and activated wait references w
     const receipts = f.db.prepare('SELECT * FROM receipts ORDER BY request_id').all();
     snapshot = await workspaceSnapshot(f.db, f.owner.accountId);
     const path = join(directory, 'restored.sqlite');
-    const binary = rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
+    const binary = rustBinary('minarbot-server', process.env.MINARBOT_RUST_BINARY);
     execFileSync(binary, ['--restore-read-only', snapshot.file, path]);
     const restored = testDatabase(path);
     try {
@@ -454,7 +454,7 @@ test('canonical shared data keeps schema ownership, collaborator scope, validati
 
 function sharedWorkerGate() {
   const python = execFileSync('python3', ['-I', '-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' }).trim();
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-query-gate-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-query-gate-'));
   const hold = join(directory, 'hold');
   writeFileSync(join(directory, 'python3'), `#!${python}
 import os, pathlib, sys, time
@@ -1632,8 +1632,8 @@ test('disaster mixed batches reconcile known evidence and privately quarantine o
   const f=await preparedTask();
   try{
     f.tasks.commit(f.principal,f.taskId,f.actionId,f.commit,f.token);
-    f.db.exec('CREATE TABLE briefsip_backup_authority(generation TEXT,owner_account TEXT)');
-    f.db.prepare('INSERT INTO briefsip_backup_authority VALUES (?,?)').run(f.principal.authorityGeneration,f.owner.accountId);
+    f.db.exec('CREATE TABLE minarbot_backup_authority(generation TEXT,owner_account TEXT)');
+    f.db.prepare('INSERT INTO minarbot_backup_authority VALUES (?,?)').run(f.principal.authorityGeneration,f.owner.accountId);
     f.db.prepare("UPDATE authority_state SET generation=?,serving_state='read_only_recovery'").run(randomUUID());
     const auth={requireCurrent:(actor:HumanActor)=>actor},gate=prepareRestoreBootstrap(f.db),proof=issueRestoreSession(f.db,auth,f.owner,gate.bootstrap);
     const request=recoveryEnvelope(f,randomUUID(),proof.recoveryGeneration),unknown=structuredClone(request.envelope.entries[0]);

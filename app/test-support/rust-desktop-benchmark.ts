@@ -23,7 +23,7 @@ async function sample(send: () => void | Promise<unknown>, state: { frames: numb
 }
 export async function benchmarkDesktop() {
   const baseline = JSON.parse(readFileSync(new URL('./rust-desktop-performance.json', import.meta.url), 'utf8'));
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-bench-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-bench-'));
   let loaded = false;
   const fixture = createServer((req, res) => {
     if (req.url === '/loaded') loaded = true;

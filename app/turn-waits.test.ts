@@ -10,7 +10,7 @@ import { restoreWorkspace } from './test-support/backup.ts';
 import { startApp } from './test-bridge.ts';
 
 test('agent event waits release workers, survive restart, honor pause and accept once', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-turn-events-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-turn-events-'));
   const prompts: string[] = [];
   let continuations = 0, invalid = false;
   const provider = createServer(async (req, res) => {
@@ -103,7 +103,7 @@ test('agent event waits release workers, survive restart, honor pause and accept
 });
 
 test('routine waits preserve artifacts and reject events cancelled before upload completes', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-routine-events-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-routine-events-'));
   let filesRequested = 0, completed = 0;
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
@@ -189,7 +189,7 @@ test('routine waits preserve artifacts and reject events cancelled before upload
 });
 
 for (const boundary of ['workflow', 'channel', 'thread'] as const) test(`${boundary} cancellation closes waiting descendants of completed steps`, async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-workflow-child-wait-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-workflow-child-wait-'));
   let recipient = '', childContinuations = 0;
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;

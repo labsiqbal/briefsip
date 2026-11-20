@@ -1,3 +1,4 @@
+import { removeProductStorage } from '../rename-storage.ts';
 // Adapted from T3 useUpdateEverything.ts (MIT). See app/t3/provenance.json.
 import { useRef, useState } from 'react';
 import type { PairedMachine } from '../../shared/machines';
@@ -59,7 +60,7 @@ export function useUpdateEverything(request: UpdateRequest, directory: Directory
   }
 
   function clearLocalCommand(id: string) {
-    if (readLocalUpdate(sessionStorage)?.id === id) sessionStorage.removeItem(localUpdateKey);
+    if (readLocalUpdate(sessionStorage)?.id === id) removeProductStorage(sessionStorage, localUpdateKey);
   }
 
   function start(plan: UpdateMachine[]) {
@@ -82,7 +83,7 @@ export function useUpdateEverything(request: UpdateRequest, directory: Directory
       try {
         const local = current.current.commands.find(command => command.machines.includes('local'));
         if (local && current.current.rows.find(row => row.local)?.status !== 'unconfirmed') clearLocalCommand(local.id);
-        sessionStorage.removeItem(updateRunKey);
+        removeProductStorage(sessionStorage, updateRunKey);
         legacy.current = readLocalUpdate(sessionStorage);
       } catch { setStorageError('Update progress could not be cleared. Check browser storage.'); return; }
       current.current = null;
@@ -93,8 +94,8 @@ export function useUpdateEverything(request: UpdateRequest, directory: Directory
 
   function discardRecovery() {
     try {
-      sessionStorage.removeItem(updateRunKey);
-      sessionStorage.removeItem(localUpdateKey);
+      removeProductStorage(sessionStorage, updateRunKey);
+      removeProductStorage(sessionStorage, localUpdateKey);
       legacy.current = null;
       setStorageError('');
     } catch { setStorageError('Saved update could not be discarded. Check browser storage.'); }

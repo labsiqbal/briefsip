@@ -10,7 +10,7 @@ import { startApp } from './test-bridge.ts';
 import { visibilityCommand } from './shared/agent-visibility.ts';
 
 test('hidden agents finish active work, hold queue across restart, reject new work and skip missed schedules', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-visibility-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-visibility-'));
   let held: ServerResponse | undefined; const calls: string[] = [], rosterIds: string[] = [];
   const finish = (res: ServerResponse) => res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'Finished' } }] }));
   const provider = createServer(async (req, res) => {

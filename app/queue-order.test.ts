@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 
 test('queue order survives restart, preserves transcript order, blocks edits and scopes, supplies reordered context', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-queue-edit-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-queue-edit-'));
   const calls: string[] = []; const summaries: any[] = []; let held: ServerResponse | undefined;
   const finish = (res: ServerResponse) => res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'Done' } }] }));
   const provider = createServer(async (req, res) => {

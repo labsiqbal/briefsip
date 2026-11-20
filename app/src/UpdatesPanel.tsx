@@ -26,7 +26,7 @@ export function UpdatesPanel({ updates }: { updates: UpdateEverythingState }) {
         <Row leading={<Monitor size={17} aria-hidden />} title="Current version" meta={state.current.id === 'development' ? 'Development' : state.current.commit.slice(0, 8)} trailing={<Badge>{state.current.version}</Badge>} />
         {state.launcherAvailable && state.previous && <Row title="Previous version" trailing={<Badge>{state.previous.version}</Badge>} />}
         {state.launcherAvailable && (offers.length ? offers.map(release => <Fragment key={release.source ?? release.id}>
-          <Row leading={<Download size={17} aria-hidden />} title={`Briefsip ${release.version}`}
+          <Row leading={<Download size={17} aria-hidden />} title={`Minarbot ${release.version}`}
             meta={`${release.source ?? 'Local feed'} · Published ${new Date(release.created).toLocaleDateString()}`}
             trailing={<Badge tone="brand">Update available</Badge>} />
           <div className="updates-release"><p className="updates-notes">{release.notes}</p>

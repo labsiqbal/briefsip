@@ -12,7 +12,7 @@ type SyncEvent = { position: number; recordId: string; recordKind: string; opera
 type SyncPage = { mode: string; highWaterPosition: number; retentionFloor: number; nextCursor: string | null; nextPage: string | null; snapshotHash: string | null; page: { events: SyncEvent[] } };
 type Query = { projectId: string; cursor?: string | null; page?: string | null };
 async function fixture(options: Partial<Parameters<typeof startCanonicalApp>[0]> = {}) {
-  const f = canonicalHttp('briefsip-sync-');
+  const f = canonicalHttp('minarbot-sync-');
   const { owner } = f;
   const project = randomUUID(), created = { requestId: randomUUID(), id: project, name: 'First project' };
   const projectPath = (id: string) => `/api/projects/${id}`;
@@ -249,7 +249,7 @@ test('changed authorization closes prior readers before required resync can exha
 });
 
 test('replacement invitation emits expiration of previous invitation in same canonical stream', async () => {
-  const mail = { from: 'owner@example.com', origin: 'https://briefsip.example', keyId: randomUUID(), key: randomBytes(32), lookupKey: randomBytes(32) };
+  const mail = { from: 'owner@example.com', origin: 'https://minarbot.example', keyId: randomUUID(), key: randomBytes(32), lookupKey: randomBytes(32) };
   const f = await fixture({ mail: () => mail, mailFrom: mail.from, mailOrigin: mail.origin });
   try {
     const { access } = f;
@@ -367,7 +367,7 @@ test('retention honors exact 90-day boundary, retains receipts and tombstones, a
 
 test('mail delivery observations commit with state and recover one provider effect after event failure', async () => {
   const now = Date.now();
-  const mail = { from: 'owner@example.com', origin: 'https://briefsip.example', keyId: randomUUID(), key: randomBytes(32), lookupKey: randomBytes(32) };
+  const mail = { from: 'owner@example.com', origin: 'https://minarbot.example', keyId: randomUUID(), key: randomBytes(32), lookupKey: randomBytes(32) };
   const options = { mail: () => mail, mailFrom: mail.from, mailOrigin: mail.origin, fixedClock: now };
   const f = await fixture(options);
   const effects = new Set<string>();

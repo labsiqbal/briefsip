@@ -1,3 +1,4 @@
+import { productEnv } from '../../desktop/src/rename-env.mjs';
 import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -115,7 +116,7 @@ export function rustDeviceFixture(database: string, proxy: Awaited<ReturnType<ty
   let results: Recovery[] = [];
   let startupFailure: unknown;
   function worker() {
-    const process = spawn(rustBinary('briefsip-server', globalThis.process.env.BRIEFSIP_RUST_BINARY),
+    const process = spawn(rustBinary('minarbot-server', productEnv('MINARBOT_RUST_BINARY')),
       hostArgs(options, ['--test-control']), { env: hostEnv(options), stdio: ['pipe', 'pipe', 'pipe'] });
     let sequence = 0, stderr = '', exitError: Error | undefined;
     const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: unknown) => void }>();
@@ -243,11 +244,11 @@ function hostArgs(options: Options, command: string[] = []) {
 }
 
 function hostEnv(options: Options) {
-  return { ...process.env, BRIEFSIP_TEST_SERVER: 'rust', BRIEFSIP_DEVICE_DB: options.database, BRIEFSIP_DEVELOPMENT: '1' };
+  return { ...process.env, MINARBOT_TEST_SERVER: 'rust', MINARBOT_DEVICE_DB: options.database, MINARBOT_DEVELOPMENT: '1' };
 }
 
 function launch(options: Options, enrollment?: 'new' | 'reenroll' | 'rotate') {
-  const binary = rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
+  const binary = rustBinary('minarbot-server', productEnv('MINARBOT_RUST_BINARY'));
   const args = hostArgs(options, enrollment ? ['enroll'] : []);
   if (enrollment && enrollment !== 'new') args.push('--' + enrollment);
   const child = spawn(binary, args, { env: hostEnv(options), stdio: ['ignore', 'pipe', 'pipe'] });
@@ -322,7 +323,7 @@ export async function enrollRustDevice(options: Options, clerkToken: string, mod
 }
 
 export function startRustDeviceTask(options: Options, taskId: string, provider: string, checkpoint?: string) {
-  const binary = rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
+  const binary = rustBinary('minarbot-server', productEnv('MINARBOT_RUST_BINARY'));
   const args = hostArgs(options, ['run-task', taskId]);
   args.push('--test-provider', provider);
   if (checkpoint) args.push('--test-checkpoint', checkpoint);
@@ -334,7 +335,7 @@ export type RecoveryExport = {
 };
 
 export function exportRustDeviceRecovery(options: Options, taskId: string, actionIds: string[], requestId: string, recoveryGeneration: string, withContent = false): RecoveryExport {
-  const binary = rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
+  const binary = rustBinary('minarbot-server', productEnv('MINARBOT_RUST_BINARY'));
   try {
     const output = execFileSync(binary, hostArgs(options, ['export-recovery']), {
       env: hostEnv(options), encoding: 'utf8', maxBuffer: 9 * 1024 * 1024, timeout: 15_000,

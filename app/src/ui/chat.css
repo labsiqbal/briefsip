@@ -316,7 +316,7 @@
 :root[data-theme="dark"] .composer { box-shadow: none; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .composer { box-shadow: none; } }
 
-/* T3 queue/voice patterns, using Briefsip surfaces and controls. */
+/* T3 queue/voice patterns, using Minarbot surfaces and controls. */
 .queued-runs { max-width: var(--chat-content-max-width); margin: 0 auto 8px; max-height: 240px; overflow: auto; border: 1px solid var(--color-border-tertiary); border-radius: 14px; background: var(--color-bg-pane); padding: 8px 12px; }
 .queued-runs__heading { align-items: center; color: var(--color-text-secondary); font-size: 12px; display: flex; gap: 8px; }
 .queued-runs ol { list-style: none; padding: 0; margin: 0; }

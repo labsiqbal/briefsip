@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 
 test('question cards persist, answer once in scope, and resume without repeating effects', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-questions-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-questions-'));
   let free = false, invalid = false, asks = 0;
   const replies: string[] = [], prompts: string[] = [];
   const provider = createServer(async (req, res) => {

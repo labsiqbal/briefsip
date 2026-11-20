@@ -13,7 +13,7 @@ import { initializeMcpSessions, mintAgentSession, verifyBearer, revokeAgentSessi
 import type { McpScope } from './shared/mcp-scopes.ts';
 const allScopes: McpScope[] = ['agents:read','agents:message','history:read'];
 async function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-mcp-server-')), database = join(dir, 'state.sqlite');
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-mcp-server-')), database = join(dir, 'state.sqlite');
   let release: (() => void) | undefined, hold = false, calls = 0;
   const provider = createServer(async (req, res) => {
     for await (const _chunk of req) { /* consume synthetic provider request */ }
@@ -21,12 +21,12 @@ async function fixture() {
     res.setHeader('Content-Type','application/json'); res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'Reply from fixture.' } }] }));
   });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve)); const address = provider.address(); assert(address && typeof address !== 'string');
-  const options = { database, baseURL: `http://127.0.0.1:${address.port}/v1`, allowedOrigins: ['https://briefsip.example:4317'] };
+  const options = { database, baseURL: `http://127.0.0.1:${address.port}/v1`, allowedOrigins: ['https://minarbot.example:4317'] };
   let app = await startApp(options, { directory: dir, servers: [provider] });
   const clients: Client[] = [];
   async function post(path: string, body: unknown, expected = 200) { const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const value = await response.json(); assert.equal(response.status, expected, JSON.stringify(value)); return value; }
   async function peer(name = 'Laptop', scopes = allScopes) { return post('/api/mcp-server/peer-tokens', { id: randomUUID(), name, scopes }); }
-  async function client(token: string) { const client = new Client({ name: 'briefsip-test', version: '1' }); clients.push(client); await client.connect(new StreamableHTTPClientTransport(new URL(app.origin + '/mcp'), { requestInit: { headers: { Authorization: `Bearer ${token}` } }, reconnectionOptions: { maxRetries: 0, initialReconnectionDelay: 1, maxReconnectionDelay: 1, reconnectionDelayGrowFactor: 1 } })); return client; }
+  async function client(token: string) { const client = new Client({ name: 'minarbot-test', version: '1' }); clients.push(client); await client.connect(new StreamableHTTPClientTransport(new URL(app.origin + '/mcp'), { requestInit: { headers: { Authorization: `Bearer ${token}` } }, reconnectionOptions: { maxRetries: 0, initialReconnectionDelay: 1, maxReconnectionDelay: 1, reconnectionDelayGrowFactor: 1 } })); return client; }
   async function rpc(token: string | undefined, method = 'tools/list', params: unknown = {}, headers: Record<string,string> = {}) { return fetch(app.origin + '/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...headers }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) }); }
   const agent = await post('/api/agents', { runtime: 'api', id: randomUUID(), name: 'Local agent', role: 'Personal agent', model: 'fixture', instructions: 'Help.' }, 201);
   return { get app() { return app; }, database, agent, post, peer, client, rpc, get calls() { return calls; }, hold() { hold = true; }, release() { hold = false; release?.(); }, async restart() { await Promise.all(clients.splice(0).map(client => client.close())); await app.close(); app = await startApp(options); }, async close() { hold = false; release?.(); await Promise.all(clients.map(client => client.close())); await app.close(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); } };
@@ -86,11 +86,11 @@ test('MCP scope, credential failures, schema checks and browser boundaries', asy
     for (const token of [undefined, 'wrong-token', 'A'.repeat(43), revoked.token, expired.token]) { const response = await f.rpc(token); assert.equal(response.status, 401); bodies.push(await response.text()); }
     assert(bodies.every(body => body === bodies[0])); assert.equal(bodies[0], JSON.stringify(forbiddenBodies[0]));
     assert.equal((await f.rpc(full.token,'tools/list',{}, { Origin: 'https://evil.example' })).status, 403);
-    assert.equal((await f.rpc(full.token,'tools/list',{}, { Origin: 'https://briefsip.example:4317' })).status, 200);
+    assert.equal((await f.rpc(full.token,'tools/list',{}, { Origin: 'https://minarbot.example:4317' })).status, 200);
     assert.equal((await f.rpc(full.token,'tools/list',{}, { Origin: f.app.origin })).status, 200);
     assert.equal((await f.rpc(undefined,'tools/list',{}, { Cookie: `token=${full.token}`, Origin: f.app.origin })).status, 401);
     const host = await new Promise<number | undefined>((resolve, reject) => { const req = httpRequest(f.app.origin + '/mcp', { method:'POST', headers:{ Host:'evil.example', Authorization:`Bearer ${full.token}` } }, res => { res.resume(); resolve(res.statusCode); }); req.on('error',reject); req.end(); }); assert.equal(host, 403);
-    const allowedHost = await f.rpc(full.token,'tools/list',{}, { Host: 'briefsip.example:4317' }); assert.equal(allowedHost.status, 200);
+    const allowedHost = await f.rpc(full.token,'tools/list',{}, { Host: 'minarbot.example:4317' }); assert.equal(allowedHost.status, 200);
     assert.equal((await fetch(f.app.origin + '/mcp', { headers: { Authorization:`Bearer ${full.token}` } })).status, 405);
     assert.equal((await f.rpc(full.token,'tools/list',{}, { 'Content-Type':'text/plain' })).status, 415);
   } finally { await f.close(); }

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { startApp } from './test-bridge.ts';
 test('new agents default to Codex with a managed workspace; API agents keep runtime and switch in one saved command', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-default-')), executable = join(directory, 'codex');
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-default-')), executable = join(directory, 'codex');
   writeFileSync(executable, `#!${process.execPath}\n` + readFileSync(new URL('./fixtures/fake-harness.mjs', import.meta.url), 'utf8').split('\n').slice(1).join('\n')); chmodSync(executable, 0o700);
   const options = { database: join(directory, 'state.sqlite'), harness: { executables: { codex: executable } } };
   let app = await startApp(options);
@@ -30,7 +30,7 @@ test('new agents default to Codex with a managed workspace; API agents keep runt
 
 
 test('provider isolation, account home rotation and MCP shell approval boundaries', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-provider-home-')), executable = join(directory, 'codex');
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-provider-home-')), executable = join(directory, 'codex');
   writeFileSync(executable, `#!${process.execPath}\n` + readFileSync(new URL('./fixtures/fake-harness.mjs', import.meta.url), 'utf8').split('\n').slice(1).join('\n')); chmodSync(executable, 0o700);
   const accounts = ['first', 'second'].map(id => ({ id, name: id, provider: 'openai-compatible', baseURL: 'http://127.0.0.1:1/v1', apiKey: `synthetic-${id}-credential` }));
   const app = await startApp({ database: join(directory, 'state.sqlite'), accounts, harness: { executables: { codex: executable } } });
@@ -85,7 +85,7 @@ test('provider isolation, account home rotation and MCP shell approval boundarie
 
 test('default harness setup saves its profile through MCP and cannot use unrelated tools', async () => {
   for (const runtime of ['codex', 'claude'] as const) {
-    const directory = mkdtempSync(join(tmpdir(), 'briefsip-native-setup-')), executable = join(directory, runtime);
+    const directory = mkdtempSync(join(tmpdir(), 'minarbot-native-setup-')), executable = join(directory, runtime);
     writeFileSync(executable, `#!${process.execPath}\n` + readFileSync(new URL('./fixtures/fake-harness.mjs', import.meta.url), 'utf8').split('\n').slice(1).join('\n')); chmodSync(executable, 0o700);
     const app = await startApp({ database: join(directory, 'state.sqlite'), baseURL: 'http://127.0.0.1:1/v1', harness: { executables: { [runtime]: executable } } });
     const api = async (path: string, body?: unknown) => { const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); const data = await response.json(); assert(response.ok, JSON.stringify(data)); return data; };
@@ -102,7 +102,7 @@ test('default harness setup saves its profile through MCP and cannot use unrelat
 });
 
 test('new agents fall back to the API runtime when Codex is not installed', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-no-codex-')), path = process.env.PATH;
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-no-codex-')), path = process.env.PATH;
   process.env.PATH = join(directory, 'empty-bin');
   const app = await startApp({ database: join(directory, 'state.sqlite') });
   const api = async (route: string, body?: unknown) => (await fetch(app.origin + route, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })).json();

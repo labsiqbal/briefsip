@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { startApp } from './test-bridge.ts';
 
 test('model conditions choose one branch without tools and reject ambiguous answers', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-workflow-condition-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-workflow-condition-'));
   let answer = 'yes'; const payloads: any[] = [];
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
@@ -87,7 +87,7 @@ test('model conditions choose one branch without tools and reject ambiguous answ
 });
 
 test('workflow HTTP versions, model steps, approval receipts and cancellation survive restart', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-workflow-http-')), models: string[] = [], toolNames: string[][] = [];
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-workflow-http-')), models: string[] = [], toolNames: string[][] = [];
   let hold = false, forceTool = false, answer = 'RESULT';
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
@@ -231,7 +231,7 @@ test('workflow HTTP versions, model steps, approval receipts and cancellation su
 });
 
 test('provider-free workflows continue beyond one batch and configuration listing is bounded', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-workflow-local-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-workflow-local-'));
   const options = { database: join(dir, 'state.sqlite') };
   let app = await startApp(options);
   async function request(path: string, body?: unknown) {
@@ -290,7 +290,7 @@ test('provider-free workflows continue beyond one batch and configuration listin
 
 
 test('workflow webhooks authenticate, deduplicate, ignore busy runs and recover rotation', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-workflow-hook-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-workflow-hook-'));
   const options = { database: join(dir, 'state.sqlite') };
   let app = await startApp(options);
   async function request(path: string, body?: unknown, status = 200) {
@@ -368,7 +368,7 @@ test('workflow webhooks authenticate, deduplicate, ignore busy runs and recover 
 });
 
 test('parallel webhook waits for provider before creating a receipt', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-parallel-hook-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-parallel-hook-'));
   let app = await startApp({ database: join(dir, 'state.sqlite') });
   const provider = createServer((_req, res) => res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'ok' } }] })));
   try {
@@ -403,7 +403,7 @@ test('parallel webhook waits for provider before creating a receipt', async () =
 
 
 test('workspace workflow directory pages across owners and keeps per-agent lists scoped', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-workflow-directory-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-workflow-directory-'));
   const options = { database: join(dir, 'state.sqlite') };
   let app = await startApp(options);
   async function request(path: string, body?: unknown, status = 200) {
@@ -448,7 +448,7 @@ test('workspace workflow directory pages across owners and keeps per-agent lists
 
 
 test('autosave stops after server canonicalizes condition property order', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-autosave-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-autosave-'));
   const app = await startApp({ database: join(dir, 'state.sqlite') });
   async function post(path: string, body: unknown) {
     const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -470,7 +470,7 @@ test('autosave stops after server canonicalizes condition property order', async
 
 
 test('workflow deletion revokes triggers, rejects stale commands and retains terminal results', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-workflow-delete-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-workflow-delete-'));
   const options = { database: join(dir, 'state.sqlite') }; let app = await startApp(options);
   async function request(path: string, body?: unknown, status = 200) {
     const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
@@ -517,7 +517,7 @@ test('workflow deletion revokes triggers, rejects stale commands and retains ter
 });
 
 test('workflow output inbox survives restart with stable paging and idempotent read', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-workflow-inbox-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-workflow-inbox-'));
   const options = { database: join(dir, 'state.sqlite') };
   let app = await startApp(options);
   async function request(path: string, body?: unknown, status = 200) {
@@ -558,7 +558,7 @@ test('workflow output inbox survives restart with stable paging and idempotent r
 });
 
 test('workflow channel outputs deliver once and recheck channel availability at completion', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-workflow-channel-output-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-workflow-channel-output-'));
   const options = { database: join(dir, 'state.sqlite') };
   let app = await startApp(options);
   async function request(path: string, body?: unknown, status = 200) {
@@ -633,7 +633,7 @@ test('workflow channel outputs deliver once and recheck channel availability at 
 });
 
 test('workflow run pages retain older approvals after restart and validate cursors', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-run-pages-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-run-pages-'));
   const options = { database: join(dir, 'state.sqlite') };
   let app = await startApp(options);
   async function request(path: string, body?: unknown, expected = 200) {

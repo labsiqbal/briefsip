@@ -14,7 +14,7 @@ type Principal = { deviceId: string; generation: number; authorityGeneration: st
 
 export async function rustTaskTestBridge(database: string, signing: ReturnType<typeof generateKeyPairSync>, testPathPrefix?: string) {
   const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
-  const auth = { secretKey: 'sk_test_fixture', publishableKey: 'pk_test_fixture', issuer: 'https://fixture.example', origin: 'https://briefsip.example', development: true, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString() };
+  const auth = { secretKey: 'sk_test_fixture', publishableKey: 'pk_test_fixture', issuer: 'https://fixture.example', origin: 'https://minarbot.example', development: true, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString() };
   const app = await startRustServer({ database, auth, testKeyring: {}, testPathPrefix });
   let previousRequest = 0, session = '';
   const pause = new Int32Array(new SharedArrayBuffer(4));

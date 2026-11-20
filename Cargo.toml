@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/briefsip-server", "crates/briefsip-launcher"]
+members = ["crates/minarbot-server", "crates/minarbot-launcher"]
 resolver = "2"
 
 [workspace.package]

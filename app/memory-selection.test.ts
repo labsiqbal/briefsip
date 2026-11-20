@@ -10,7 +10,7 @@ import { startApp } from './test-bridge.ts';
 import { memoryCommand, memoryDraft } from './src/memory-command.ts';
 
 test('automatic memory selection is atomic, user-protected, scoped and durable across resume', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-selection-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-selection-'));
   let args: unknown = {}, hold = false, held = false, result: any, initial = '';
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;

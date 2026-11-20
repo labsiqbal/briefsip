@@ -54,13 +54,13 @@ export async function fileOutputPanelSmoke({ page, origin, root, check, gitAgent
       await details.getByRole('button', { name: 'Close file', exact: true }).click();
     });
     await check('NC1 empty queue clears stale order recovery and ignores unavailable storage', async () => {
-      await page.evaluate(base => sessionStorage.setItem(`briefsip-queue-order:${base}/queue`, '{}'), base);
+      await page.evaluate(base => sessionStorage.setItem(`minarbot-queue-order:${base}/queue`, '{}'), base);
       await page.reload(); await page.getByLabel('Agent reply', { exact: true }).waitFor();
-      await page.waitForFunction(base => !sessionStorage.getItem(`briefsip-queue-order:${base}/queue`), base);
+      await page.waitForFunction(base => !sessionStorage.getItem(`minarbot-queue-order:${base}/queue`), base);
       assert.equal(await page.getByRole('region', { name: 'Queued messages', exact: true }).count(), 0);
       await page.evaluate(() => {
         const original = Storage.prototype.getItem;
-        Storage.prototype.getItem = function(key) { if (key.startsWith('briefsip-queue-order:')) throw new Error('Synthetic denied storage'); return original.call(this, key); };
+        Storage.prototype.getItem = function(key) { if (key.startsWith('minarbot-queue-order:')) throw new Error('Synthetic denied storage'); return original.call(this, key); };
       });
       await details.getByRole('tab', { name: 'Chats', exact: true }).click();
       assert.equal(await page.getByRole('region', { name: 'Queued messages', exact: true }).count(), 0);
@@ -107,7 +107,7 @@ export async function fileOutputPanelSmoke({ page, origin, root, check, gitAgent
       await page.waitForFunction(async base => (await (await fetch(base + '/turns')).json()).some(turn => turn.text === 'FP1 open' && turn.status === 'done'), base);
       await details.getByRole('button', { name: 'Close details', exact: true }).click();
       await page.getByRole('button', { name: 'Show details', exact: true }).waitFor();
-      assert.equal(await page.evaluate(() => localStorage.getItem('briefsip:details-open')), '0');
+      assert.equal(await page.evaluate(() => localStorage.getItem('minarbot:details-open')), '0');
       await page.reload(); await page.getByRole('textbox', { name: 'Message FP1 Files', exact: true }).waitFor();
       await page.getByLabel('Agent reply', { exact: true }).first().waitFor();
       assert.equal(await details.isVisible(), false);

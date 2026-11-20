@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { parseRelease } from '../scripts/release-lib.mjs';
+import { bridgeArchiveName, githubRepository } from '../scripts/rename-compat.mjs';
 const { buildRelease, assertNativeDependencies } = await import(new URL('../scripts/release.mjs', import.meta.url).href);
 
 function fixture() {
@@ -87,13 +88,13 @@ test('Rust resource failure prevents publication; successful staging retains UI 
   try {
     // A caller's shared target directory once made 0.13.2 publish the previous build's binaries.
     process.env.CARGO_TARGET_DIR = join(bin, 'elsewhere');
-    for (const directory of ['scripts', 'crates/briefsip-server', 'crates/briefsip-launcher', 'target/release']) mkdirSync(join(f.dir, directory), { recursive: true });
+    for (const directory of ['scripts', 'crates/minarbot-server', 'crates/minarbot-launcher', 'target/release']) mkdirSync(join(f.dir, directory), { recursive: true });
     writeFileSync(join(f.dir, 'Cargo.toml'), '[workspace]\n');
-    writeFileSync(join(f.dir, 'crates/briefsip-server/provenance.json'), '{}');
-    writeFileSync(join(f.dir, 'target/release/briefsip-server'), 'fixture binary', { mode: 0o700 });
-    writeFileSync(join(f.dir, 'target/release/briefsip-launcher'), 'fixture launcher', { mode: 0o700 });
-    writeFileSync(join(f.dir, 'crates/briefsip-launcher/provenance.json'), '{"launcher":true}');
-    writeFileSync(join(f.dir, 'crates/briefsip-launcher/NOTICE'), 'T3 MIT notice');
+    writeFileSync(join(f.dir, 'crates/minarbot-server/provenance.json'), '{}');
+    writeFileSync(join(f.dir, 'target/release/minarbot-server'), 'fixture binary', { mode: 0o700 });
+    writeFileSync(join(f.dir, 'target/release/minarbot-launcher'), 'fixture launcher', { mode: 0o700 });
+    writeFileSync(join(f.dir, 'crates/minarbot-launcher/provenance.json'), '{"launcher":true}');
+    writeFileSync(join(f.dir, 'crates/minarbot-launcher/NOTICE'), 'T3 MIT notice');
     for (const name of ['LICENSE', 'agent-delegation.LICENSE']) writeFileSync(join(f.dir, 'app', name), 'Fixture notice');
     writeFileSync(join(f.dir, 'app/package.json'), JSON.stringify({ version: '1.0.0', type: 'module', scripts: { lint: 'node -e "0"', build: 'node -e "0"', test: 'node -e "0"' } }));
     writeFileSync(join(bin, 'cargo'), `#!${process.execPath}\nimport { appendFileSync } from 'node:fs';\nappendFileSync('cargo-checks', JSON.stringify(process.argv.slice(2)) + '\\n');\nappendFileSync('cargo-targets', process.env.CARGO_TARGET_DIR + '\\n');\n`, { mode: 0o700 });
@@ -126,12 +127,14 @@ console.log(value === 'missing' ? 'libvips.so => not found' : value === 'externa
     const info = buildRelease(options), stage = join(f.options.releases, info.id);
     const dependencies = readFileSync(join(f.dir, 'ldd-checks'), 'utf8').trim().split('\n');
     assert.equal(dependencies.length, 4);
-    assert(dependencies.at(-2)!.endsWith('/bin/briefsip-server'));
-    assert(dependencies.at(-1)!.endsWith('/bin/briefsip-launcher'));
+    assert(dependencies.at(-2)!.endsWith('/bin/minarbot-server'));
+    assert(dependencies.at(-1)!.endsWith('/bin/minarbot-launcher'));
     assert.equal(readFileSync(join(stage, 'dist/index.html'), 'utf8'), 'Fixture UI\n');
-    assert.equal(readFileSync(join(stage, 'bin/briefsip-server'), 'utf8'), 'fixture binary');
+    assert.equal(readFileSync(join(stage, 'bin/minarbot-server'), 'utf8'), 'fixture binary');
     for (const name of ['LICENSE', 'agent-delegation.LICENSE']) assert.equal(readFileSync(join(stage, 'bin', name), 'utf8'), 'Fixture notice');
     assert.equal(readFileSync(join(stage, 'bin/provenance.json'), 'utf8'), '{}');
+    assert.equal(readFileSync(join(stage, 'bin/minarbot-launcher'), 'utf8'), 'fixture launcher');
+    assert.equal(readFileSync(join(stage, 'bin/briefsip-server'), 'utf8'), 'fixture binary');
     assert.equal(readFileSync(join(stage, 'bin/briefsip-launcher'), 'utf8'), 'fixture launcher');
     assert.equal(readFileSync(join(stage, 'bin/launcher-provenance.json'), 'utf8'), '{"launcher":true}');
     assert.equal(readFileSync(join(stage, 'bin/launcher.NOTICE'), 'utf8'), 'T3 MIT notice');
@@ -146,10 +149,19 @@ console.log(value === 'missing' ? 'libvips.so => not found' : value === 'externa
     rmSync(f.dir, { recursive: true, force: true }); rmSync(bin, { recursive: true, force: true }); }
 });
 
+function copyReleaseSupport(dir: string) {
+  for (const path of ['scripts/rename-compat.mjs', 'desktop/src/rename-env.mjs', 'desktop/package.json']) {
+    const destination = join(dir, path);
+    mkdirSync(join(destination, '..'), { recursive: true });
+    cpSync(new URL(`../${path}`, import.meta.url), destination);
+  }
+}
+
 test('release CLI demonstrates passing and failing --issues using a fixture gh reader', t => {
   const f = fixture(), bin = mkdtempSync(join(tmpdir(), 'release-gh-'));
   try {
-    mkdirSync(join(f.dir, 'scripts'));
+    copyReleaseSupport(f.dir);
+    mkdirSync(join(f.dir, 'scripts'), { recursive: true });
     for (const name of ['release.mjs', 'release-lib.mjs', 'install-machine.sh', 'uninstall-machine.sh']) cpSync(new URL(`../scripts/${name}`, import.meta.url), join(f.dir, 'scripts', name));
     cpSync(new URL('../scripts/release-lib.mjs', import.meta.url), join(f.dir, 'scripts/release-lib.mjs'));
     const pkg = { name: 'release-gate-fixture', version: '1.0.0', type: 'module', scripts: { lint: 'node -e "0"', test: 'node -e "0"', build: 'node -e "0"' } };
@@ -165,7 +177,7 @@ test('release CLI demonstrates passing and failing --issues using a fixture gh r
     writeFileSync(join(bin, 'gh'), `#!${process.execPath}
 import assert from 'node:assert/strict';
 const args = process.argv.slice(2);
-assert.deepEqual(args, ['issue', 'view', args[2], '-R', 'labsiqbal/briefsip', '--json', 'comments']);
+assert.deepEqual(args, ['issue', 'view', args[2], '-R', ${JSON.stringify(githubRepository)}, '--json', 'comments']);
 assert(['30', '31'].includes(args[2]));
 console.log(JSON.stringify({comments: [{body: 'Claimed by Fixture, branch ' + (args[2] === '30' ? 't3/shipped' : 't3/unmerged')}]}));
 `, { mode: 0o700 });
@@ -187,12 +199,13 @@ console.log(JSON.stringify({comments: [{body: 'Claimed by Fixture, branch ' + (a
 function githubFixture(t: TestContext) {
   const f = fixture();
   const sandbox = mkdtempSync(join(tmpdir(), 'release-github-'));
+  copyReleaseSupport(f.dir);
   t.after(() => { rmSync(f.dir, { recursive: true, force: true }); rmSync(sandbox, { recursive: true, force: true }); });
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
   const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
   const key = join(sandbox, 'signing.pem');
   writeFileSync(key, pem, { mode: 0o600 });
-  mkdirSync(join(f.dir, 'scripts'));
+  mkdirSync(join(f.dir, 'scripts'), { recursive: true });
   for (const name of ['release-lib.mjs', 'install-machine.sh', 'uninstall-machine.sh']) {
     cpSync(new URL(`../scripts/${name}`, import.meta.url), join(f.dir, 'scripts', name));
   }
@@ -207,7 +220,7 @@ function githubFixture(t: TestContext) {
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 const [version, out] = process.argv.slice(2);
-const name = 'Briefsip-' + version + '-x86_64.AppImage';
+const name = 'Minarbot-' + version + '-x86_64.AppImage';
 writeFileSync(join(out, name), 'AppImage fixture ' + version);
 writeFileSync(join(out, 'latest-linux.yml'), 'version: ' + version + '\\npath: ' + name + '\\n');
 `);
@@ -229,14 +242,14 @@ appendFileSync(join(out, 'calls'), JSON.stringify(args) + '\\n');
 const state = join(out, 'state');
 let release = existsSync(state) ? JSON.parse(readFileSync(state, 'utf8')) : undefined;
 if (command === 'api') {
-  assert.deepEqual(args, ['api', 'repos/labsiqbal/briefsip/git/matching-refs/tags/v1.0.0']);
+  assert.deepEqual(args, ['api', ${JSON.stringify(`repos/${githubRepository}/git/matching-refs/tags/v1.0.0`)}]);
   const sha = process.env.FIXTURE_WRONG_TAG ? '0'.repeat(40) : commit;
   console.log(JSON.stringify(release && !release.isDraft ? [{ ref: 'refs/tags/v1.0.0', object: { type: 'commit', sha } }] : []));
   process.exit(0);
 }
 assert.equal(command, 'release');
 assert.equal(tag, 'v1.0.0');
-assert.deepEqual(args.slice(3, 5), ['-R', 'labsiqbal/briefsip']);
+assert.deepEqual(args.slice(3, 5), ['-R', ${JSON.stringify(githubRepository)}]);
 if (action === 'view') {
   if (!release) { console.error('release not found'); process.exit(1); }
   console.log(JSON.stringify(release));
@@ -245,8 +258,8 @@ if (action === 'view') {
 if (action === 'create' || action === 'upload') {
   if (action === 'create') {
     assert.equal(release, undefined);
-    assert.deepEqual(args.slice(5, 11), ['--target', commit, '--title', 'Briefsip 1.0.0', '--notes', 'Public notes']);
-    release = { isDraft: true, targetCommitish: commit, name: 'Briefsip 1.0.0', body: 'Public notes', assets: [] };
+    assert.deepEqual(args.slice(5, 11), ['--target', commit, '--title', 'Minarbot 1.0.0', '--notes', 'Public notes']);
+    release = { isDraft: true, targetCommitish: commit, name: 'Minarbot 1.0.0', body: 'Public notes', assets: [] };
   }
   assert.equal(release.isDraft, true);
   for (const [i, path] of args.slice(action === 'create' ? 11 : 5).entries()) {
@@ -279,19 +292,19 @@ if (action === 'create' || action === 'upload') {
 `, { mode: 0o700 });
   const run = (args: string[], env: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, [
     join(f.dir, 'scripts/release.mjs'), '--releases', f.options.releases, ...args,
-  ], { cwd: f.dir, encoding: 'utf8', env: { ...process.env, PATH: `${sandbox}:${process.env.PATH}`, HOME: sandbox, BRIEFSIP_RELEASE_SIGNING_KEY: key, ...env } });
+  ], { cwd: f.dir, encoding: 'utf8', env: { ...process.env, PATH: `${sandbox}:${process.env.PATH}`, HOME: sandbox, MINARBOT_RELEASE_SIGNING_KEY: key, ...env } });
   const calls = () => existsSync(join(output, 'calls')) ? readFileSync(join(output, 'calls'), 'utf8').trim().split('\n').map(line => JSON.parse(line) as string[]) : [];
   return { ...f, run, calls, output, key, publicKey, commit, id: `1.0.0-${commit.slice(0, 8)}` };
 }
 
 test('release CLI uploads exact signed ustar assets and the version-matched desktop build', t => {
   const f = githubFixture(t);
-  const result = f.run(['--desktop', '--notes', 'Public notes', '--signing-key', f.key], { BRIEFSIP_RELEASE_SIGNING_KEY: '/wrong/path' });
+  const result = f.run(['--desktop', '--notes', 'Public notes', '--signing-key', f.key], { MINARBOT_RELEASE_SIGNING_KEY: '/wrong/path' });
   assert.equal(result.status, 0, result.stderr);
   const uploaded = (name: string) => readFileSync(join(f.output, name));
-  const archive = 'briefsip-1.0.0-linux-x86_64.tar.gz';
+  const archive = bridgeArchiveName('1.0.0');
   assert.deepEqual(f.calls().find(args => args[1] === 'create')?.slice(11).map(path => path.split('/').at(-1)).sort(), [
-    archive, 'latest.json', 'latest.json.sig', 'Briefsip-1.0.0-x86_64.AppImage', 'latest-linux.yml',
+    archive, 'latest.json', 'latest.json.sig', 'Minarbot-1.0.0-x86_64.AppImage', 'latest-linux.yml',
   ].sort());
   const tar = gunzipSync(uploaded(archive));
   assert.equal(tar.subarray(257, 265).toString(), 'ustar\0' + '00');
@@ -304,7 +317,7 @@ test('release CLI uploads exact signed ustar assets and the version-matched desk
     version: '1.0.0', id: f.id, commit: f.commit, archive, sha256: createHash('sha256').update(uploaded(archive)).digest('hex'),
     size: uploaded(archive).length, notes: 'Public notes', created: JSON.parse(readFileSync(join(f.options.releases, 'feed/latest.json'), 'utf8')).created,
   });
-  assert.match(uploaded('latest-linux.yml').toString(), /path: Briefsip-1\.0\.0-x86_64\.AppImage/);
+  assert.match(uploaded('latest-linux.yml').toString(), /path: Minarbot-1\.0\.0-x86_64\.AppImage/);
 });
 
 test('release CLI keeps a failed upload local and resumes the draft idempotently without rebuilding', t => {
@@ -331,7 +344,7 @@ test('release CLI keeps a failed upload local and resumes the draft idempotently
   assert.equal(calls.filter(args => args[1] === 'edit').length, 1);
   assert.deepEqual(calls.filter(args => args[1] === 'delete-asset').map(args => args[5]), ['latest.json']);
   assert.equal(calls.filter(args => args[1] === 'upload').length, 1);
-  assert(calls.findLast(args => args[1] === 'upload')?.some(arg => arg.endsWith('Briefsip-1.0.0-x86_64.AppImage')));
+  assert(calls.findLast(args => args[1] === 'upload')?.some(arg => arg.endsWith('Minarbot-1.0.0-x86_64.AppImage')));
 });
 
 test('release CLI skips GitHub for local-only releases and blocks dirty trees, failed gates, and implicit notes', t => {
@@ -343,7 +356,7 @@ test('release CLI skips GitHub for local-only releases and blocks dirty trees, f
   assert.match(f.run([]).stderr, /--notes/);
   assert.equal(f.run(release, { FIXTURE_GATE_FAIL: '7' }).status, 1);
   assert.equal(existsSync(f.options.releases), false);
-  const result = f.run(['--no-github'], { BRIEFSIP_RELEASE_SIGNING_KEY: '/wrong/path' });
+  const result = f.run(['--no-github'], { MINARBOT_RELEASE_SIGNING_KEY: '/wrong/path' });
   assert.equal(result.status, 0, result.stderr);
   assert(existsSync(join(f.options.releases, f.id, 'release.json')));
   assert.equal(f.run(['--github-only', f.id]).status, 1);
@@ -368,11 +381,11 @@ test('release CLI refuses wrong-mode, non-Ed25519 and mismatched signing keys be
 });
 
 const releaseRoot = new URL('../target/release/', import.meta.url);
-test('staged Rust binaries resolve only system loader libraries', { skip: !existsSync(new URL('briefsip-server', releaseRoot)) }, () => {
-  const stage = mkdtempSync(join(tmpdir(), 'briefsip-native-dependencies-'));
+test('staged Rust binaries resolve only system loader libraries', { skip: !existsSync(new URL('minarbot-server', releaseRoot)) }, () => {
+  const stage = mkdtempSync(join(tmpdir(), 'minarbot-native-dependencies-'));
   try {
     mkdirSync(join(stage, 'bin'));
-    for (const name of ['briefsip-server', 'briefsip-launcher']) {
+    for (const name of ['minarbot-server', 'minarbot-launcher']) {
       const binary = join(stage, 'bin', name);
       cpSync(new URL(name, releaseRoot), binary);
       assertNativeDependencies(binary);

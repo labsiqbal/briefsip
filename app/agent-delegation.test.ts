@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { startApp } from './test-bridge.ts';
 
 test('delegation isolates child context and durably wakes idle parent exactly once', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-delegation-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-delegation-'));
   let target = '', wakes = 0, release = () => {};
   const held = new Promise<void>(resolve => { release = resolve; });
   const provider = createServer(async (req, res) => {
@@ -59,7 +59,7 @@ import type { AgentLimits } from './test-support/agent-delegation.ts';
 
 type Script = (body: any) => Promise<{ name: string; args: unknown } | string> | { name: string; args: unknown } | string;
 async function fixture(script: Script, agentLimits?: Partial<AgentLimits>) {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-delegation-')), calls: any[] = [];
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-delegation-')), calls: any[] = [];
   const provider = createServer({ keepAliveTimeout: 0 }, async (req, res) => {
     let raw = ''; for await (const part of req) raw += part;
     const body = JSON.parse(raw); calls.push(body);

@@ -19,7 +19,7 @@ test('presentation settings validate persisted values and fail safely without ov
   }
   const blocked = readPresentation({ getItem() { throw new Error('Storage blocked'); } });
   assert.deepEqual(blocked.value, defaultPresentation); assert(blocked.error);
-  assert.deepEqual(parsePresentation(JSON.stringify({ version: 1, theme: 'light', textSize: 'large' })), { version: 1, colorTheme: 'briefsip', theme: 'light', textSize: 'large' });
+  assert.deepEqual(parsePresentation(JSON.stringify({ version: 1, theme: 'light', textSize: 'large' })), { version: 1, colorTheme: 'minarbot', theme: 'light', textSize: 'large' });
   const copy = parsePresentation(null); copy.theme = 'light'; assert.equal(defaultPresentation.theme, 'dark');
 });
 

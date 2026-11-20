@@ -16,7 +16,7 @@ export function UpdateEverythingDialog({ updates }: { updates: UpdateEverythingS
     ? active ? `Updating ${count} ${count === 1 ? 'machine' : 'machines'}` : result.attention ? 'Update results' : 'Update complete'
     : updates.planning || !count ? 'Update machines' : `Update ${count} ${count === 1 ? 'machine' : 'machines'}?`;
   return <Dialog open={updates.open} onOpenChange={open => { if (!open) updates.dismiss(); }}
-    title={title} description={version ? [`Briefsip ${version}`, source].filter(Boolean).join(' · ') : undefined} size="lg"
+    title={title} description={version ? [`Minarbot ${version}`, source].filter(Boolean).join(' · ') : undefined} size="lg"
     onCloseAutoFocus={event => {
       if (document.activeElement === document.body && !updates.ready && !active) {
         const fallback = document.querySelector<HTMLButtonElement>('.sidebar-settings, .sidebar-reveal');
@@ -35,7 +35,7 @@ export function UpdateEverythingDialog({ updates }: { updates: UpdateEverythingS
       {run && <p className="sr-only" role="status">{result.label}</p>}
       {!run && updates.planning ? <SkeletonRows /> : rows.length > 0 ? <div className="k-table-wrap">
         <table className="k-table updates-table">
-          <thead><tr><th scope="col">Machine</th><th scope="col">Briefsip</th><th scope="col">Running turns</th></tr></thead>
+          <thead><tr><th scope="col">Machine</th><th scope="col">Minarbot</th><th scope="col">Running turns</th></tr></thead>
           <tbody>{rows.map(row => {
             const status = (row as Partial<RunMachine>).status;
             const reason = (row as Partial<RunMachine>).reason;

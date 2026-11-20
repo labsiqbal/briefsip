@@ -1,5 +1,5 @@
 {
-  "name": "briefsip-ui-smoke",
+  "name": "minarbot-ui-smoke",
   "private": true,
   "type": "module",
   "engines": { "node": ">=22.23.4" },

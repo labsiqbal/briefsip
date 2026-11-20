@@ -9,7 +9,7 @@ import test from 'node:test';
 import { startApp } from './test-bridge.ts';
 
 test('cold runtime catalog probes in parallel and shares one refresh', { timeout: 20_000 }, async t => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-catalog-latency-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-catalog-latency-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const executable = join(directory, 'harness');
   const calls = join(directory, 'calls');
@@ -53,7 +53,7 @@ esac
 });
 
 test('room POST latency stays flat behind a held discussion', { timeout: 45_000 }, async t => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-room-latency-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-room-latency-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   let calls = 0;
   const provider = createServer(request => {
@@ -116,7 +116,7 @@ test('room POST latency stays flat behind a held discussion', { timeout: 45_000 
 });
 
 test('a free turn is admitted while other requests keep writing', { timeout: 60_000 }, async t => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-write-admission-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-write-admission-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const models: string[] = [];
   const provider = createServer(request => {

@@ -14,10 +14,10 @@ import { prepareRestoreBootstrap } from './test-support/backup.ts';
 import { startRustServer } from './rust-test-server.ts';
 
 test('Rust signed task admission, context fencing, one-use commits and durable results', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-rust-tasks-')), database = join(directory, 'db');
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-rust-tasks-')), database = join(directory, 'db');
   const db = testDatabase(database); installFrozenNodeSchema(db); initializeMemory(db);
   const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
-  const authConfig = { secretKey: 'sk_test_fixture', publishableKey: 'pk_test_fixture', issuer: 'https://fixture.clerk.accounts.dev', origin: 'https://briefsip.example', development: true, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString() };
+  const authConfig = { secretKey: 'sk_test_fixture', publishableKey: 'pk_test_fixture', issuer: 'https://fixture.clerk.accounts.dev', origin: 'https://minarbot.example', development: true, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString() };
   const owner = { accountId: randomUUID(), issuer: authConfig.issuer, subject: 'user_fixture', sessionId: 'sess_fixture', expiresAt: Date.now() + 600000 };
   db.prepare('INSERT INTO accounts(id,issuer,clerk_sub,created) VALUES(?,?,?,?)').run(owner.accountId, owner.issuer, owner.subject, Date.now());
   const signing = generateKeyPairSync('ed25519'), installation = generateKeyPairSync('ed25519'), encryption = generateKeyPairSync('x25519');
@@ -195,8 +195,8 @@ test('Rust signed task admission, context fencing, one-use commits and durable r
     assert.deepEqual((await send(`/api/tasks/${requestId}/recovery-results`, published, false, 200, proof)).data.resultRef, report.resultRef);
     db.prepare('UPDATE recovery_evidence_sessions SET expires_at=0').run();
     assert.equal((await send(`/api/tasks/${requestId}/recovery-results`, published, false, 403, proof)).error.code, 'recovery_session_invalid');
-    db.exec('CREATE TABLE briefsip_backup_authority(generation TEXT,owner_account TEXT)');
-    db.prepare('INSERT INTO briefsip_backup_authority VALUES(?,?)').run(authorityGeneration, owner.accountId);
+    db.exec('CREATE TABLE minarbot_backup_authority(generation TEXT,owner_account TEXT)');
+    db.prepare('INSERT INTO minarbot_backup_authority VALUES(?,?)').run(authorityGeneration, owner.accountId);
     db.prepare("UPDATE authority_state SET generation=?,serving_state='read_only_recovery'").run(randomUUID());
     const bootstrap = prepareRestoreBootstrap(db);
     const restoreProof = (await send('/api/restore/reconcile', { requestId: randomUUID(), bootstrap: bootstrap.bootstrap })).data;

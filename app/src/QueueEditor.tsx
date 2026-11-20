@@ -1,3 +1,4 @@
+import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { useRef, useState } from 'react';
 import { Pencil } from 'lucide-react';
 import { Attachments } from './Attachments';
@@ -10,13 +11,13 @@ type Command = { id: string; editor: string; revision: number; action: 'hold' | 
 type Draft = { editor: string; revision: number; text: string; files: File[] };
 export function QueueEditor({ turn, path, archived, request, onChanged }: { turn: { id: string; revision: number; status: string; text: string; editing?: boolean; files: File[] }; path: string; archived: boolean; request: <T>(path: string, data?: unknown) => Promise<T>; onChanged: () => void }) {
   const endpoint = `${path}/${turn.id}/edit`;
-  const key = `briefsip:queue-edit:${endpoint}`;
+  const key = `minarbot:queue-edit:${endpoint}`;
   const [recovery] = useState(() => { try { return { command: readQueueEdit(key), error: '' }; } catch { return { command: null, error: 'Saved edit could not be read. Check browser storage.' }; } });
   const [draft, setDraft] = useState<Draft | null>(() => recovery.command ? { ...recovery.command, files: recovery.command.files.map(id => turn.files.find(file => file.id === id) ?? { id, name: 'Attachment' }) } : null), [busy, setBusy] = useState(false), [error, setError] = useState(recovery.error);
   const pending = useRef<Command | null>(recovery.command), flight = useRef(false);
   useQueueEditLease(endpoint, draft, request, value => {
     try {
-      if (sessionStorage.getItem(key)) { void act('save'); return; }
+      if (readProductStorage(sessionStorage, key)) { void act('save'); return; }
     } catch { setError('Draft storage is unavailable. Copy your edit before leaving.'); return; }
     setDraft(null); pending.current = null; setError(value); onChanged();
   }, key);
@@ -40,7 +41,7 @@ export function QueueEditor({ turn, path, archived, request, onChanged }: { turn
     try {
       const result = await request<{ revision: number }>(endpoint, command);
       pending.current = null;
-      if (command.action !== 'hold') sessionStorage.removeItem(key);
+      if (command.action !== 'hold') removeProductStorage(sessionStorage, key);
       setDraft(command.action === 'hold' ? { ...value, revision: result.revision } : null);
       onChanged();
     } catch (error) {

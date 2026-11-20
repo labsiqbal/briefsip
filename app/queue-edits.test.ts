@@ -29,7 +29,7 @@ test('saved queued edit recovers exact command and rejects corrupt browser data'
 });
 
 test('queue edit holds survive restart, preserve order and original receipt, reject competing editors and completed cancellations', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-queue-edit-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-queue-edit-'));
   const calls: string[] = []; let held: ServerResponse | undefined;
   const finish = (res: ServerResponse) => res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'Done' } }] }));
   const provider = createServer(async (req, res) => {
@@ -112,7 +112,7 @@ test('queue edit holds survive restart, preserve order and original receipt, rej
 });
 
 test('abandoned edit lease expires and drains its message and following queue in order', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-abandoned-edit-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-abandoned-edit-'));
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   const calls: string[] = [];
@@ -160,7 +160,7 @@ test('abandoned edit lease expires and drains its message and following queue in
 });
 
 test('Rust expires migrated permanent queue holds and fences the prior revision once', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-queue-migration-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-queue-migration-'));
   const database = join(directory, 'state.sqlite');
   let app = await startApp({ database });
   const legacy = randomUUID(), current = randomUUID();

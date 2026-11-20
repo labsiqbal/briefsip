@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { startApp } from './test-bridge.ts';
 
 test('agent flow edits preserve ownership, revisions and ordered receipts across restart', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-flow-tools-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-flow-tools-'));
   let args: unknown, hold = false, held = false, lastResult: any;
   let beforeEdit: (() => Promise<void>) | undefined;
   const provider = createServer(async (req, res) => {

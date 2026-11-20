@@ -16,7 +16,7 @@ const envelope=(n:number,text='Hello',user='UUSER',root?:string)=>({type:'events
 
 
 for(const useButtons of [false,true])test(`Slack actual agent API retries one task and isolates requester question answers (buttons=${useButtons})`,async()=>{
- const root=mkdtempSync(join(tmpdir(),'briefsip-slack-bridge-')),agent=randomUUID();
+ const root=mkdtempSync(join(tmpdir(),'minarbot-slack-bridge-')),agent=randomUUID();
  let calls=0,sequence=0;
  const yes=useButtons?'Yes '.repeat(45).trim():'Yes';
  const provider=createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;const data=JSON.parse(raw);calls++;const answered=data.messages.some((m:any)=>m.role==='tool');res.end(JSON.stringify({choices:[{finish_reason:answered?'stop':'tool_calls',message:answered?{content:'Confirmed'}:{tool_calls:[{id:'question',type:'function',function:{name:'ask_user',arguments:JSON.stringify({question:'Proceed?',choices:[yes,'No']})}}]}}]}));});
@@ -53,8 +53,8 @@ for(const useButtons of [false,true])test(`Slack actual agent API retries one ta
    const edits: ((p:ReturnType<typeof click>['payload']) => void)[] = [
     p=>p.user.id='UOTHER',
     p=>p.message.ts='1700000099.000001',
-    p=>p.actions[0]={type:'button',action_id:'briefsip_answer_7',value:`question:${q.id}:7`},
-    p=>p.actions[0]={type:'button',action_id:'briefsip_approve_yes',value:`approval:${q.id}:yes`},
+    p=>p.actions[0]={type:'button',action_id:'minarbot_answer_7',value:`question:${q.id}:7`},
+    p=>p.actions[0]={type:'button',action_id:'minarbot_approve_yes',value:`approval:${q.id}:yes`},
    ];
    for(const edit of edits){
     const bad=click();edit(bad.payload);await connector.send(bad);
@@ -94,7 +94,7 @@ for(const useButtons of [false,true])test(`Slack actual agent API retries one ta
 // Minimal fixture framing; production uses Node's native WebSocket implementation.
 function frame(value:unknown){const bytes=Buffer.from(JSON.stringify(value)),head=bytes.length<126?Buffer.from([0x81,bytes.length]):Buffer.from([0x81,126,bytes.length>>8,bytes.length&255]);return Buffer.concat([head,bytes]);}
 test('Slack Socket Mode runner acknowledges journaled event and delivers once after reconnect',async()=>{
- const root=mkdtempSync(join(tmpdir(),'briefsip-slack-run-')),agent=randomUUID(),controller=new AbortController(),sockets=new Set<any>();let providerCalls=0,connections=0,acks=0,delivered=0;const limited=new Map<string,number>();const authHeaders:string[]=[];const finish=()=>{if(delivered&&acks>=2)setTimeout(()=>controller.abort(),20);};
+ const root=mkdtempSync(join(tmpdir(),'minarbot-slack-run-')),agent=randomUUID(),controller=new AbortController(),sockets=new Set<any>();let providerCalls=0,connections=0,acks=0,delivered=0;const limited=new Map<string,number>();const authHeaders:string[]=[];const finish=()=>{if(delivered&&acks>=2)setTimeout(()=>controller.abort(),20);};
  const provider=createServer(async(req,res)=>{for await(const _ of req){}providerCalls++;res.end(JSON.stringify({choices:[{message:{content:'Socket reply'},finish_reason:'stop'}]}));});
  const slack=createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;const body=JSON.parse(raw);authHeaders.push(String(req.headers.authorization));let result:any;
   if(['/api/auth.test','/api/apps.connections.open'].includes(req.url!)){const prior=limited.get(req.url!);if(prior===undefined){limited.set(req.url!,Date.now());res.writeHead(429,{'Retry-After':'1'});res.end('Wait');return;}assert(Date.now()-prior>=1000);}
@@ -111,7 +111,7 @@ test('Slack Socket Mode runner acknowledges journaled event and delivers once af
 });
 
 test('Slack status and stop scope to requester root and preserve cancellation identity after lost responses',async()=>{
- const root=mkdtempSync(join(tmpdir(),'briefsip-slack-controls-')),agent=randomUUID();
+ const root=mkdtempSync(join(tmpdir(),'minarbot-slack-controls-')),agent=randomUUID();
  let sequence=0,calls=0;
  const provider=createServer(async(req,res)=>{for await(const _ of req){}calls++;res.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{id:'ask',type:'function',function:{name:'ask_user',arguments:JSON.stringify({question:'Wait',choices:['Yes','No']})}}]}}]}));});
  await new Promise<void>(r=>provider.listen(0,'127.0.0.1',r));const address=provider.address();assert(address&&typeof address!=='string');
@@ -172,7 +172,7 @@ test('Slack status and stop scope to requester root and preserve cancellation id
 });
 
 test('Slack offline recovery pins revisions, retains confirmed chunks and requires explicit CLI confirmation',async()=>{
- const root=mkdtempSync(join(tmpdir(),'briefsip-slack-recovery-')),id=randomUUID(),agent=randomUUID();
+ const root=mkdtempSync(join(tmpdir(),'minarbot-slack-recovery-')),id=randomUUID(),agent=randomUUID();
  let mode='lost',calls=0;
  const fixture=await connectorApp('slack',root,agent,{remote:(_method,raw,req,res)=>{
   calls++;const body=JSON.parse(raw.toString());
@@ -212,7 +212,7 @@ test('Slack offline recovery pins revisions, retains confirmed chunks and requir
 });
 
 test('Slack startup cancellation releases lock and status retains authentication cooldown',async()=>{
- const root=mkdtempSync(join(tmpdir(),'briefsip-slack-start-stop-')),directory=join(root,'state'),controller=new AbortController();let requests=0;
+ const root=mkdtempSync(join(tmpdir(),'minarbot-slack-start-stop-')),directory=join(root,'state'),controller=new AbortController();let requests=0;
  const server=createServer(async(req,res)=>{for await(const _ of req){}requests++;res.writeHead(429,{'Retry-After':'60'});res.end('Wait');});await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const address=server.address();assert(address&&typeof address!=='string');
  const timeout=setTimeout(()=>controller.abort(),5000);
  try{
@@ -224,7 +224,7 @@ test('Slack startup cancellation releases lock and status retains authentication
 });
 
 test('Slack interactive Socket Mode withholds early ACK and commits one decision before redelivery ACK',async()=>{
- const root=mkdtempSync(join(tmpdir(),'briefsip-slack-button-socket-')),agent=randomUUID(),notice=randomUUID(),run=randomUUID();
+ const root=mkdtempSync(join(tmpdir(),'minarbot-slack-button-socket-')),agent=randomUUID(),notice=randomUUID(),run=randomUUID();
  let release!:()=>void,exposed=false;
  const gate=new Promise<void>(resolve=>release=resolve);
  const fixture=await connectorApp('slack',root,agent,{remote:async(method,raw)=>{
@@ -235,7 +235,7 @@ test('Slack interactive Socket Mode withholds early ACK and commits one decision
  const {connector}=fixture;
  const db=openConnectorJournalFixture('slack',connector.directory);
  const ts='1700000001.000001',rootTs='1700000000.000001';
- const click=(id:string,choice='yes')=>({type:'interactive',envelope_id:id,payload:{type:'block_actions',team:{id:'TTEAM'},api_app_id:'AAPP',user:{id:'UUSER'},channel:{id:'DCHAT'},container:{channel_id:'DCHAT',message_ts:ts},message:{user:'UBOT',ts},actions:[{type:'button',action_id:`briefsip_approve_${choice}`,value:`approval:${notice}:${choice}`}]}});
+ const click=(id:string,choice='yes')=>({type:'interactive',envelope_id:id,payload:{type:'block_actions',team:{id:'TTEAM'},api_app_id:'AAPP',user:{id:'UUSER'},channel:{id:'DCHAT'},container:{channel_id:'DCHAT',message_ts:ts},message:{user:'UBOT',ts},actions:[{type:'button',action_id:`minarbot_approve_${choice}`,value:`approval:${notice}:${choice}`}]}});
  const decision=()=>db.prepare('SELECT id,accepted FROM slack_callbacks').get();
  try{
   db.prepare("INSERT INTO slack_workflows VALUES (?,'DCHAT','UUSER',?,?)").run(run,rootTs,randomUUID());
@@ -254,7 +254,7 @@ test('Slack interactive Socket Mode withholds early ACK and commits one decision
 });
 
 test('Slack shared channels require opt-in mention and retain one scoped multi-user thread',async()=>{
- const root=mkdtempSync(join(tmpdir(),'briefsip-slack-channels-')),agent=randomUUID(),channels=['CROOM','GROOM'];
+ const root=mkdtempSync(join(tmpdir(),'minarbot-slack-channels-')),agent=randomUUID(),channels=['CROOM','GROOM'];
  let calls=0;const prompts:any[]=[];
  const provider=createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;prompts.push(JSON.parse(raw));calls++;res.end(JSON.stringify({choices:[{message:{content:`Reply ${calls}`},finish_reason:'stop'}]}));});
  await new Promise<void>(r=>provider.listen(0,'127.0.0.1',r));const address=provider.address();assert(address&&typeof address!=='string');

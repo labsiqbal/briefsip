@@ -18,7 +18,7 @@ test('remote message recovery keeps exact target, ID and payload and rejects cor
 async function api(app:App,path:string,body?:unknown,status=200):Promise<any>{const r=await fetch(app.origin+path,{method:body===undefined?'GET':'POST',headers:{Origin:app.origin,'Content-Type':'application/json',Connection:'close'},body:body===undefined?undefined:JSON.stringify(body)});const value=await r.json();assert.equal(r.status,status,JSON.stringify(value));return value;}
 async function until(check:()=>Promise<any>){const end=Date.now()+20000;while(Date.now()<end){const result=await check();if(result)return result;await new Promise(r=>setTimeout(r,30));}assert.fail('Remote fixture timed out');}
 async function fixture(script:(body:any)=>any,limits={}){
-  const dir=mkdtempSync(join(tmpdir(),'briefsip-remote-agents-'));
+  const dir=mkdtempSync(join(tmpdir(),'minarbot-remote-agents-'));
   const provider=createServer(async(req,res)=>{let raw='';for await(const c of req)raw+=c;try{const result=await script(JSON.parse(raw)),message=typeof result==='string'?{content:result}:{tool_calls:[{id:randomUUID(),type:'function',function:{name:result.name,arguments:JSON.stringify(result.args)}}]};res.setHeader('Content-Type','application/json');res.end(JSON.stringify({choices:[{finish_reason:typeof result==='string'?'stop':'tool_calls',message}]}));}catch{res.writeHead(500);res.end('{}');}});
   await new Promise<void>(r=>provider.listen(0,'127.0.0.1',r));const address=provider.address();assert(address&&typeof address!=='string');
   const common={baseURL:`http://127.0.0.1:${address.port}/v1`,agentLimits:limits}, aOptions={...common,database:join(dir,'a.sqlite')},bOptions={...common,database:join(dir,'b.sqlite')};
@@ -44,8 +44,8 @@ for(const mode of ['message','wait','completion','restart-a','restart-b'])test(`
   try{
     const id=randomUUID(),path=`/api/agents/${f.alpha.id}/turns`;await api(f.a,path,{id,text:'Start'},202);
     await until(async()=>calls===1);
-    const inbound=await until(async()=>{const threads=await api(f.b,`/api/agents/${beta}/threads`);if(!threads.length)return null;const rows=await api(f.b,`/api/threads/${threads[0].id}/turns`);return rows.find((row:any)=>row.origin==='peer:Briefsip: A')});assert.equal(inbound.message_depth,1);
-    const inboundThreads=await api(f.b,`/api/agents/${beta}/threads`);assert.equal(inboundThreads[0].delivery,true);assert.equal(inboundThreads[0].name,'Briefsip on A: Remote work');
+    const inbound=await until(async()=>{const threads=await api(f.b,`/api/agents/${beta}/threads`);if(!threads.length)return null;const rows=await api(f.b,`/api/threads/${threads[0].id}/turns`);return rows.find((row:any)=>row.origin==='peer:Minarbot: A')});assert.equal(inbound.message_depth,1);
+    const inboundThreads=await api(f.b,`/api/agents/${beta}/threads`);assert.equal(inboundThreads[0].delivery,true);assert.equal(inboundThreads[0].name,'Minarbot on A: Remote work');
     const outboundThreads=await api(f.a,`/api/agents/${f.alpha.id}/threads`);assert.equal(outboundThreads[0].delivery,true);assert.equal(outboundThreads[0].name,'Beta on B: Remote work');
     assert.equal(f.machine.agents[0].role, 'Personal agent');
     await until(async()=>{return (await api(f.a,path)).some((row:any)=>row.id===id&&row.agentMessages?.length);});

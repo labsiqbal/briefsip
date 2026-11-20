@@ -51,7 +51,7 @@ test('transcript distinguishes pending input and names each approval kind', () =
 });
 
 test('turn list exposes scoped read-only activity metadata in direct, thread and channel views', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-transcript-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-transcript-'));
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const part of req) raw += part;
     const body = JSON.parse(raw);
@@ -113,7 +113,7 @@ test('stopped duration uses run start and accepted Stop, independent of queue ti
 });
 
 test('Stop timestamps survive repeated cancellation and server restart', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-stop-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-stop-'));
   const provider = createServer((_req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: 'Synthetic partial reply.' }, finish_reason: null }] })}\n\n`);

@@ -4,7 +4,7 @@ import { Check } from 'lucide-react';
 import { Button } from './kit';
 import './avatar.css';
 
-// Original Briefsip silhouettes. No upstream avatar paths or assets are used.
+// Original Minarbot silhouettes. No upstream avatar paths or assets are used.
 export const AVATAR_SHAPES = [
   { name: 'Pebble', path: 'M23 28C37 13 68 16 80 34C94 55 84 80 63 85C42 91 17 78 15 58C13 46 15 37 23 28Z' },
   { name: 'Sprout', path: 'M46 29C28 31 21 18 25 10C42 9 52 16 52 28C65 24 79 33 83 48C90 70 76 87 51 88C27 89 14 73 19 52C22 39 31 31 46 29Z' },

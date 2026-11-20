@@ -1,6 +1,6 @@
 import { speechVoiceKey } from './speech.ts';
 
-export const speechPreferenceKey = 'briefsip.speech.enabled.v1';
+export const speechPreferenceKey = 'minarbot.speech.enabled.v1';
 type SpeechPreference = { enabled: boolean; voice: string; error: string };
 
 export function parseSpeechPreference(raw: string | null): boolean {

@@ -8,7 +8,7 @@ import { connectorApp, slackEnvelope, waitFor } from './test-support/rust-connec
 import { openConnectorJournalFixture } from './test-support/connector-journal-command.ts';
 
 for (const shared of [false, true]) test(`Slack workflow commands bind requester root and retry run, approval and cancellation across restart (shared=${shared})`, async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-slack-workflows-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-slack-workflows-'));
   const agent = randomUUID(), channel = shared ? 'CROOM' : 'DCHAT';
   const f = await connectorApp('slack', directory, agent, { channels: shared ? [channel] : [] });
   const { connector, ui } = f;
@@ -37,7 +37,7 @@ for (const shared of [false, true]) test(`Slack workflow commands bind requester
     return { type: 'interactive', envelope_id: `click-${++sequence}`, payload: {
       type: 'block_actions', team: { id: 'TTEAM' }, api_app_id: 'AAPP', user: { id: 'UUSER' }, channel: { id: channel },
       container: { channel_id: channel, message_ts: n.ts }, message: { user: 'UBOT', ts: n.ts },
-      actions: [{ type: 'button', action_id: `briefsip_approve_${choice}`, value: `approval:${n.id}:${choice}` }],
+      actions: [{ type: 'button', action_id: `minarbot_approve_${choice}`, value: `approval:${n.id}:${choice}` }],
     } };
   }
   const fault = (suffix: string, after = true) => connector.faults.push({ method: 'POST', path: new RegExp(`/${suffix}$`), after });

@@ -3,7 +3,7 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   css: {
     postcss: { plugins: [{
-      postcssPlugin: 'briefsip-relative-type',
+      postcssPlugin: 'minarbot-relative-type',
       Declaration(declaration) {
         // SVG diagram coordinates and physical panel widths stay in pixels.
         if (['font', 'font-size', 'line-height'].includes(declaration.prop) || declaration.prop.startsWith('--text-'))

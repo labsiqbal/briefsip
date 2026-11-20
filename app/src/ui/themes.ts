@@ -1,5 +1,5 @@
 export type ColorMode = 'light' | 'dark';
-export type ColorTheme = 'briefsip' | 'github' | 'catppuccin' | 'everforest' | 'solarized' | 'midnight';
+export type ColorTheme = 'minarbot' | 'github' | 'catppuccin' | 'everforest' | 'solarized' | 'midnight';
 
 type Palette = {
   background: string; foreground: string; card: string; muted: string;
@@ -10,7 +10,7 @@ type Palette = {
   userBubble: string;
 };
 
-const briefsip = {
+const minarbot = {
   light: { background: '#FCFCFC', foreground: '#1C1C1C', card: '#FFFFFF', muted: '#F1F1F1', mutedForeground: '#5A5A5A', popover: '#FFFFFF', primary: '#4F55D9', primaryForeground: '#FFFFFF', secondary: '#E9E9E9', accent: '#E7E8FB', border: '#C9C9C9', ring: '#4F55D9', destructive: '#C62835', destructiveForeground: '#FFFFFF', sidebarBackground: '#F5F5F5', userBubble: '#E2E3FA', },
   dark: { background: '#121212', foreground: '#F5F5F5', card: '#161616', muted: '#282828', mutedForeground: '#B8B8B8', popover: '#1F1F1F', primary: '#6B71F2', primaryForeground: '#121212', secondary: '#303030', accent: '#282B5C', border: '#555555', ring: '#9DA1FF', destructive: '#FF6B6B', destructiveForeground: '#121212', sidebarBackground: '#0E0E0E', userBubble: '#30315A', },
 } satisfies Record<ColorMode, Palette>;
@@ -18,7 +18,7 @@ const briefsip = {
 // Palettes and sRGB contrast helpers adapted from Hermes Agent (MIT, NOTICE.hermes).
 // Semantic projection and independent appearance follow T3 (MIT, NOTICE.t3).
 // See provenance.json for pinned revisions and source paths.
-const presets: Record<Exclude<ColorTheme, 'briefsip'>, Record<ColorMode, Palette>> = {
+const presets: Record<Exclude<ColorTheme, 'minarbot'>, Record<ColorMode, Palette>> = {
   github: {
     light: { background: '#FFFFFF', foreground: '#1F2328', card: '#F6F8FA', muted: '#F6F6F6', mutedForeground: '#656D76', popover: '#FFFFFF', primary: '#196D31', primaryForeground: '#FFFFFF', secondary: '#DFEBE2', accent: '#E3EDE6', border: '#D0D7DE', ring: '#196D31', destructive: '#CF222E', destructiveForeground: '#FFFFFF', sidebarBackground: '#F6F8FA', userBubble: '#DBE7E2', },
     dark: { background: '#0D1117', foreground: '#E6EDF3', card: '#010409', muted: '#1A1E24', mutedForeground: '#7D8590', popover: '#161B22', primary: '#4F9E5E', primaryForeground: '#FFFFFF', secondary: '#1F382B', accent: '#192A24', border: '#30363D', ring: '#4F9E5E', destructive: '#F85149', destructiveForeground: '#FFFFFF', sidebarBackground: '#010409', userBubble: '#0F2018', },
@@ -43,7 +43,7 @@ const presets: Record<Exclude<ColorTheme, 'briefsip'>, Record<ColorMode, Palette
 };
 
 export const colorThemes: { id: ColorTheme; label: string }[] = [
-  { id: 'briefsip', label: 'Briefsip' },
+  { id: 'minarbot', label: 'Minarbot' },
   { id: 'github', label: 'GitHub' },
   { id: 'catppuccin', label: 'Catppuccin' },
   { id: 'everforest', label: 'Everforest' },
@@ -68,7 +68,7 @@ function readable(value: string, backgrounds: string[], minimum = 4.5) {
 
 export type ThemeTokenValues = Record<string, string>;
 export function themeTokenValues(theme: ColorTheme, mode: ColorMode): ThemeTokenValues {
-  const palette = theme === 'briefsip' ? briefsip[mode] : presets[theme][mode];
+  const palette = theme === 'minarbot' ? minarbot[mode] : presets[theme][mode];
   const surfaces = [palette.background, palette.card, palette.sidebarBackground, palette.popover, palette.muted, palette.accent, palette.secondary, palette.userBubble,
     // Opaque equivalents of the translucent hover/selection overlays emitted below.
     ...[palette.background, palette.card, palette.sidebarBackground, palette.popover].map(base => mix(base, palette.foreground, 0x14 / 255))];
@@ -93,9 +93,9 @@ export function themeTokenValues(theme: ColorTheme, mode: ColorMode): ThemeToken
 
 export function applyColorTheme(root: HTMLElement, theme: ColorTheme) {
   const document = root.ownerDocument;
-  if (!document.getElementById('briefsip-color-themes')) {
+  if (!document.getElementById('minarbot-color-themes')) {
     const style = document.createElement('style');
-    style.id = 'briefsip-color-themes';
+    style.id = 'minarbot-color-themes';
     style.nonce = document.querySelector('meta[name="csp-nonce"]')?.getAttribute('content') ?? '';
     style.textContent = colorThemes.map(({ id }) => {
       const rule = (mode: ColorMode, preference: string) => `:root[data-color-theme='${id}'][data-theme='${preference}'], .theme-preview[data-color-theme='${id}'][data-theme='${preference}'] { ${Object.entries(themeTokenValues(id, mode)).map(([name, value]) => `${name}: ${value};`).join(' ')} }`;

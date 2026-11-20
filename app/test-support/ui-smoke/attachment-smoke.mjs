@@ -35,7 +35,7 @@ export async function attachmentSmoke({ check, page, context, origin, agentChat,
   async function matrix(label) {
     for (const size of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }]) {
       await page.setViewportSize(size);
-      for (const [palette, theme, textSize] of [['briefsip', 'dark', 'standard'], ['briefsip', 'light', 'standard'], ['catppuccin', 'dark', 'standard'], ['briefsip', 'dark', 'compact']]) {
+      for (const [palette, theme, textSize] of [['minarbot', 'dark', 'standard'], ['minarbot', 'light', 'standard'], ['catppuccin', 'dark', 'standard'], ['minarbot', 'dark', 'compact']]) {
         await page.evaluate(({ palette, theme, textSize }) => Object.assign(document.documentElement.dataset, { colorTheme: palette, theme, textSize }), { palette, theme, textSize });
         await screenshot(`at1-${label}-${size.width}-${palette}-${theme}-${textSize}`);
         const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
@@ -44,7 +44,7 @@ export async function attachmentSmoke({ check, page, context, origin, agentChat,
       }
     }
     await page.setViewportSize(viewport);
-    await page.evaluate(() => Object.assign(document.documentElement.dataset, { colorTheme: 'briefsip', theme: 'dark', textSize: 'standard' }));
+    await page.evaluate(() => Object.assign(document.documentElement.dataset, { colorTheme: 'minarbot', theme: 'dark', textSize: 'standard' }));
   }
   try {
     await page.reload();
@@ -139,7 +139,7 @@ export async function attachmentSmoke({ check, page, context, origin, agentChat,
     });
   } finally {
     await page.setViewportSize(viewport);
-    await page.evaluate(() => Object.assign(document.documentElement.dataset, { colorTheme: 'briefsip', theme: 'dark', textSize: 'standard' }));
+    await page.evaluate(() => Object.assign(document.documentElement.dataset, { colorTheme: 'minarbot', theme: 'dark', textSize: 'standard' }));
     await agentChat();
   }
 }

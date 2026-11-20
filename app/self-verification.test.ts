@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 
 test('synthetic done without verification gets one nudge, checks precede final, evidence stays outside reply', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-verify-')), database = join(dir, 'state.sqlite');
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-verify-')), database = join(dir, 'state.sqlite');
   const calls: string[] = [], errors: unknown[] = []; let file = '', checked = false, reviewed = false;
   const provider = createServer(async (req, res) => {
     try {

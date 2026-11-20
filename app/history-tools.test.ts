@@ -10,7 +10,7 @@ import { startApp } from './test-bridge.ts';
 import { subscribe, unsubscribe } from 'node:diagnostics_channel';
 
 test('agent history tools retrieve old originals and reject foreign conversations', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-history-tools-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-history-tools-'));
   let foreignId = '', oldestId = '', attachmentId = '', before = 1, mode = 'read';
   const results: any[] = [];
   const providerPhases: string[] = [];

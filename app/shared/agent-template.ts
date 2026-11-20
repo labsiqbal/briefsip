@@ -9,11 +9,11 @@ export function parseAgentRole(value: unknown = ''): string {
   return value.trim();
 }
 
-export type AgentTemplate = { format: 'briefsip-agent'; version: 1; name: string; role?: string; model: string; backupModel?: string; instructions: string; threadLimit: number; toolBudget?: number; avatar?: string };
+export type AgentTemplate = { format: 'minarbot-agent'; version: 1; name: string; role?: string; model: string; backupModel?: string; instructions: string; threadLimit: number; toolBudget?: number; avatar?: string };
 export function parseAgentTemplate(value: unknown): AgentTemplate {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Template must be a JSON object.');
   const data = value as Record<string, unknown>;
-  if (data.format !== 'briefsip-agent' || data.version !== 1 || Object.keys(data).some(key => !['format', 'version', 'name', 'role', 'model', 'backupModel', 'instructions', 'threadLimit', 'toolBudget', 'avatar'].includes(key))) throw new Error('Unsupported template format or version.');
+  if (!['minarbot-agent', 'briefsip-agent'].includes(String(data.format)) || data.version !== 1 || Object.keys(data).some(key => !['format', 'version', 'name', 'role', 'model', 'backupModel', 'instructions', 'threadLimit', 'toolBudget', 'avatar'].includes(key))) throw new Error('Unsupported template format or version.');
   if (data.avatar !== undefined) {
     if (typeof data.avatar !== 'string' || data.avatar.length > 699052 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data.avatar)) throw new Error('Invalid template avatar.');
     const bytes = atob(data.avatar);
@@ -39,7 +39,7 @@ export function parseAgentTemplate(value: unknown): AgentTemplate {
   if (!Number.isSafeInteger(data.threadLimit) || Number(data.threadLimit) < 1 || Number(data.threadLimit) > 32) throw new Error('Side thread count must be 1 to 32.');
   const model = text('model', 160);
   if (data.backupModel !== undefined && (typeof data.backupModel !== 'string' || data.backupModel.length > 160 || /[\x00-\x1f\x7f]/.test(data.backupModel) || data.backupModel.trim() === model)) throw new Error('Fallback model is invalid or matches the primary model.');
-  return { format: 'briefsip-agent', version: 1, name: text('name', 80), role, model, ...(data.backupModel === undefined ? {} : { backupModel: (data.backupModel as string).trim() }), instructions: text('instructions', 8000), threadLimit: Number(data.threadLimit), ...(data.toolBudget === undefined ? {} : { toolBudget: Number(data.toolBudget) }), ...(data.avatar === undefined ? {} : { avatar: data.avatar as string }) };
+  return { format: 'minarbot-agent', version: 1, name: text('name', 80), role, model, ...(data.backupModel === undefined ? {} : { backupModel: (data.backupModel as string).trim() }), instructions: text('instructions', 8000), threadLimit: Number(data.threadLimit), ...(data.toolBudget === undefined ? {} : { toolBudget: Number(data.toolBudget) }), ...(data.avatar === undefined ? {} : { avatar: data.avatar as string }) };
 }
 export function templateCommand(template: AgentTemplate, id: string) {
   const { name, role, model, instructions, threadLimit, toolBudget, backupModel, avatar } = parseAgentTemplate(template);

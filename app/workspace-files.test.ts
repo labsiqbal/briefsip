@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 
 test('workspace browser API pages text and directories while enforcing agent folder and read boundaries', async () => {
-  const dir=mkdtempSync(join(tmpdir(),'briefsip-workspace-browser-')),root=join(dir,'root');mkdirSync(root);
+  const dir=mkdtempSync(join(tmpdir(),'minarbot-workspace-browser-')),root=join(dir,'root');mkdirSync(root);
   const agent=randomUUID(),other=randomUUID();let app=await startApp({database:join(dir,'db.sqlite'),workspaces:[{agent,directory:root}]});
   async function get(route:string,status=200,headers:Record<string,string>={}){const response=await fetch(app.origin+route,{headers});assert.equal(response.status,status);assert.equal(response.headers.get('cache-control'),'no-store');return response.json();}
   const path=`/api/agents/${agent}/workspace`;
@@ -48,7 +48,7 @@ test('workspace browser API pages text and directories while enforcing agent fol
 });
 
 test('workspace descriptor reads reject escapes and changed pages, retain bounded listing', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-workspace-')), root = join(dir, 'root');
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-workspace-')), root = join(dir, 'root');
   mkdirSync(root);
   const agent = randomUUID(), workspaces = [{ agent, directory: root }];
   const app = await startApp({ database: join(dir, 'db.sqlite'), workspaces });
@@ -120,7 +120,7 @@ test('workspace descriptor reads reject escapes and changed pages, retain bounde
 });
 
 for (const metadata of [false,true]) test(`workspace tools metadata=${metadata} share agent direct/side folder, isolate managed folders and channels across restart`, async () => {
-  const dir=mkdtempSync(join(tmpdir(),'briefsip-workspace-http-')), root=join(dir,'root');mkdirSync(root);writeFileSync(join(root,'note.txt'),'OWN_WORKSPACE');
+  const dir=mkdtempSync(join(tmpdir(),'minarbot-workspace-http-')), root=join(dir,'root');mkdirSync(root);writeFileSync(join(root,'note.txt'),'OWN_WORKSPACE');
   const agent=randomUUID(), other=randomUUID(), toolName=metadata?'inspect_workspace_file':'read_workspace_file'; let advertised=false;
   const binary=Buffer.from([0,255,128,42]);if(metadata)writeFileSync(join(root,'note.txt'),binary);
   const expected=metadata?JSON.stringify({path:'note.txt',size:binary.length,digest:createHash('sha256').update(binary).digest('hex')}):'OWN_WORKSPACE';

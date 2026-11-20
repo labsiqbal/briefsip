@@ -1,3 +1,4 @@
+import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { isReconnecting } from './http';
 import { RightPanel, useRightPanel } from './RightPanel';
 import { useDetailsOpen } from './ui/layout';
@@ -59,7 +60,7 @@ export function MachinesPanel({ request, onChanged }: { request: Request; onChan
   }
   async function act(action: string, run: () => Promise<void>) { setBusy(action); setError(''); setNotice(''); try { await run(); onChanged(); } catch (error) { setError(message(error)); } finally { setBusy(''); } }
   async function unpair(machine: PairedMachine) {
-    if (!await confirm({ title: `Unpair ${machine.name}?`, description: 'Removes this machine from your list and revokes its access here. Briefsip also asks the other machine to revoke access. If it is offline, remove this pairing there too.', confirm: 'Unpair machine', danger: true })) return;
+    if (!await confirm({ title: `Unpair ${machine.name}?`, description: 'Removes this machine from your list and revokes its access here. Minarbot also asks the other machine to revoke access. If it is offline, remove this pairing there too.', confirm: 'Unpair machine', danger: true })) return;
     await act('unpair', async () => { await request('/api/machines/remove', { id: crypto.randomUUID(), environmentId: machine.id }); await reload(); setDetail(null); setNotice(`${machine.name} was unpaired.`); });
   }
   const remaining = pairingCode ? Math.max(0, Math.ceil((pairingCode.expiresAt - now) / 1000)) : 0;
@@ -70,7 +71,7 @@ export function MachinesPanel({ request, onChanged }: { request: Request; onChan
   function closeSetup(open: boolean) { if (!open && !busy) { setSetup(null); setPairingCode(null); setCopied(false); } }
   function openSetup(flow: 'install' | 'pair' | 'code') { requestAnimationFrame(() => { addTrigger.current?.focus(); if (flow === 'install') closeInstall(true); else setSetup(flow); }); }
   const addMachine = <ActionMenu label="Add machine" trigger={<Button ref={addTrigger} variant="primary" icon={<Plus size={14} aria-hidden />}>Add machine<ChevronDown size={14} aria-hidden /></Button>} items={[
-    { label: 'Install Briefsip', onSelect: () => openSetup('install') },
+    { label: 'Install Minarbot', onSelect: () => openSetup('install') },
     { label: 'Pair machine', onSelect: () => openSetup('pair') },
     { label: 'Show pairing code', onSelect: () => openSetup('code') },
   ]} />;
@@ -116,7 +117,7 @@ export function MachinesPanel({ request, onChanged }: { request: Request; onChan
         {error && <Alert tone="error">{error}</Alert>}
       </div>
     </Dialog>
-    <Dialog open={setup === 'install'} onOpenChange={closeInstall} title="Install Briefsip" footer={<><Button onClick={() => closeInstall(false)}>Close</Button>{!installCommand && <Button variant="primary" busy={installBusy} onClick={() => void createInstall()}>{install ? 'Create new command' : 'Create install command'}</Button>}</>}>
+    <Dialog open={setup === 'install'} onOpenChange={closeInstall} title="Install Minarbot" footer={<><Button onClick={() => closeInstall(false)}>Close</Button>{!installCommand && <Button variant="primary" busy={installBusy} onClick={() => void createInstall()}>{install ? 'Create new command' : 'Create install command'}</Button>}</>}>
       <div className="k-stack machine-install set4-detail">
         <Tooltip content={<span className="bs-root set4-tooltip">{"Requires Node.js 22.23.4 or later, a systemd user session, and Tailscale on the same tailnet with MagicDNS and HTTPS enabled. Git and Bubblewrap are optional."}</span>}><span className="k-field__hint" tabIndex={0}>Linux · Requirements</span></Tooltip>
         <Tooltip content={<span className="bs-root set4-tooltip">{"Installs a private release, starts a user service, enables linger if permitted, and uses Tailscale Serve on port 4317."}</span>}><span className="k-field__hint" tabIndex={0}>User service · Tailscale Serve :4317</span></Tooltip>
@@ -136,8 +137,8 @@ function remoteTone(item: RemoteMessage) { return item.state === 'uncertain' || 
 export function RemoteAgentDetail({ machine, agent, request }: { machine?: PairedMachine; agent?: PeerAgentSummary; request: Request }) {
   const rightPanel = useRightPanel(`remote:${machine?.id}:${agent?.id}`);
   const [detailsOpen, setDetailsOpen] = useDetailsOpen();
-  const storage=`briefsip:remote-message:${machine?.id}:${agent?.id}`;
-  const [recovery]=useState(()=>{try{return {pending:restoreRemoteMessage(sessionStorage.getItem(storage),machine?.id ?? '',agent?.id ?? ''),draft:sessionStorage.getItem(storage+':draft') ?? '',invalid:false};}catch{return {pending:null,draft:'',invalid:true};}});
+  const storage=`minarbot:remote-message:${machine?.id}:${agent?.id}`;
+  const [recovery]=useState(()=>{try{return {pending:restoreRemoteMessage(readProductStorage(sessionStorage, storage),machine?.id ?? '',agent?.id ?? ''),draft:readProductStorage(sessionStorage, storage+':draft') ?? '',invalid:false};}catch{return {pending:null,draft:'',invalid:true};}});
   const [pending,setPending]=useState(recovery.pending),[invalid,setInvalid]=useState(recovery.invalid);
   const [messages,setMessages]=useState<RemoteMessage[]|null>(null),[text,setText]=useState(recovery.pending?.text ?? recovery.draft),[error,setError]=useState(''),[loadError,setLoadError]=useState(''),[busy,setBusy]=useState(false);
   const end=useRef<HTMLDivElement>(null),readEpoch=useRef(0),flight=useRef(false),mounted=useRef(true),confirm=useConfirm();
@@ -153,12 +154,12 @@ export function RemoteAgentDetail({ machine, agent, request }: { machine?: Paire
     try{
       sessionStorage.setItem(storage,JSON.stringify(command));setPending(command);
       await request('/api/remote-agents/messages',command);
-      sessionStorage.removeItem(storage);sessionStorage.removeItem(storage+':draft');
+      removeProductStorage(sessionStorage, storage);removeProductStorage(sessionStorage, storage+':draft');
       if(!mounted.current)return;
       setPending(null);setText('');const epoch=++readEpoch.current,result=await request<{messages:RemoteMessage[]}>(path);if(mounted.current&&epoch===readEpoch.current)setMessages(result.messages);
     }catch(e){if(mounted.current)setError(message(e));}finally{flight.current=false;if(mounted.current)setBusy(false);}
   }
-  async function discard(){if(!await confirm({title:'Discard saved message?',description:'Delivery may already have succeeded. Check this conversation and the receiving machine before sending a replacement.',confirm:'Discard message',danger:true}))return;try{sessionStorage.removeItem(storage);setPending(null);setInvalid(false);}catch{setError('Browser storage could not be updated.');}}
+  async function discard(){if(!await confirm({title:'Discard saved message?',description:'Delivery may already have succeeded. Check this conversation and the receiving machine before sending a replacement.',confirm:'Discard message',danger:true}))return;try{removeProductStorage(sessionStorage, storage);setPending(null);setInvalid(false);}catch{setError('Browser storage could not be updated.');}}
   const heading = useRef<HTMLDivElement>(null); useEffect(() => { heading.current?.focus(); }, [machine?.id, agent?.id]);
   const binding = agent && machine?.agentProviders?.[agent.id];
   const provider = machine?.providerAccounts?.find(account => account.id === binding?.provider_account);

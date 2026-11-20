@@ -9,7 +9,7 @@ import { initializeCanonicalSchema, schemaVersion } from './test-support/legacy-
 import { startApp } from './test-bridge.ts';
 
 test('v1 migration preserves actual legacy rows without inferring ownership or scope', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-migration-')); const database = join(dir, 'legacy.sqlite');
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-migration-')); const database = join(dir, 'legacy.sqlite');
   let app: Awaited<ReturnType<typeof startApp>> | undefined;
   try {
     app = await startApp({ database });

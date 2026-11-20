@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 test('agents bind isolated provider accounts across channels, side threads, edit and restart', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-accounts-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-accounts-'));
   const calls: { account: string; body: any }[] = [];
   let transferTarget = '', pause = false;
   const provider = createServer(async (req, res) => {

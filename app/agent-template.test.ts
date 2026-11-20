@@ -8,7 +8,7 @@ import { parseAgentRole, parseAgentTemplate, restoreTemplateImport, templateComm
 import { startApp } from './test-bridge.ts';
 import sharp from 'sharp';
 
-const template = { format: 'briefsip-agent', version: 1, name: 'Template', role: 'Personal agent', model: 'fixture', instructions: '<script>Test text only</script>', threadLimit: 3 } as const;
+const template = { format: 'minarbot-agent', version: 1, name: 'Template', role: 'Personal agent', model: 'fixture', instructions: '<script>Test text only</script>', threadLimit: 3 } as const;
 test('agent template validation rejects extra authority and preserves exact recovery identity', () => {
   assert.deepEqual(parseAgentTemplate(template), template);
   for (const input of [null, [], {}, { ...template, version: 2 }, { ...template, token: 'secret' }, { ...template, permissions: 'full' }, { ...template, path: '/tmp/example' }, { ...template, instructions: '' }, { ...template, name: 'x'.repeat(81) }, { ...template, model: 2 }, { ...template, threadLimit: 33 }, { ...template, threadLimit: 1.5 }]) assert.throws(() => parseAgentTemplate(input));
@@ -20,7 +20,7 @@ test('agent template validation rejects extra authority and preserves exact reco
 });
 
 test('template avatars import atomically and replay never replaces newer images', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-template-avatar-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-template-avatar-'));
   const options = { database: join(dir, 'state.sqlite') };
   let app = await startApp(options);
   async function request(path: string, body?: unknown, expected = 200) {
@@ -70,7 +70,7 @@ test('template avatars import atomically and replay never replaces newer images'
 });
 
 test('profile export and reviewed import create a new agent once across restart without changing original', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-template-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-template-'));
   const options = { database: join(dir, 'state.sqlite'), apiKey: 'private-fixture-key' };
   let app = await startApp(options);
   async function request(path: string, body?: unknown, expected = 200) {

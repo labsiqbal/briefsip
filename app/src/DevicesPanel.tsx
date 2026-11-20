@@ -91,7 +91,7 @@ export function DevicesPanel({ request }: { request: Request }) {
       footer={expired ? <Button variant="primary" busy={busy} onClick={issue}>Create new code</Button> : <Button onClick={() => setCode(undefined)}>Done</Button>}>
       {error && <Alert tone="error">{error}</Alert>}
       {expired ? <Alert>Pairing code expired.</Alert> : <div className="devices-pairing">
-        <img src={code.qr} alt="QR code for the Briefsip pairing page" width="160" height="160" />
+        <img src={code.qr} alt="QR code for the Minarbot pairing page" width="160" height="160" />
         <strong aria-label={`Pairing code ${code.code.split('').join(' ')}`}>{code.code}</strong>
         <a className="k-link" href={code.url} target="_blank" rel="noopener noreferrer">{code.url}</a>
         <span className="k-field__hint">Valid for 2 minutes</span>

@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 
 test('duplicate discovery startup cannot interrupt the owning server task', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'briefsip-discovery-owner-'));
+  const root = mkdtempSync(join(tmpdir(), 'minarbot-discovery-owner-'));
   let called!: () => void;
   const started = new Promise<void>(resolve => { called = resolve; });
   const provider = createServer(async (req, _res) => { for await (const _chunk of req) {} called(); });
@@ -34,7 +34,7 @@ test('duplicate discovery startup cannot interrupt the owning server task', asyn
 });
 
 test('private script discovery follows live grants, rotates on restart and preserves foreign files', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'briefsip-discovery-'));
+  const root = mkdtempSync(join(tmpdir(), 'minarbot-discovery-'));
   const directory = join(root, 'scripts'), file = join(directory, 'connection.json');
   const options = { database: join(root, 'db.sqlite'), scriptDirectory: directory };
   let app = await startApp(options);
@@ -86,7 +86,7 @@ test('private script discovery follows live grants, rotates on restart and prese
 });
 
 test('discovery rejects unsafe directories and symlink destinations without changing targets', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'briefsip-discovery-boundary-'));
+  const root = mkdtempSync(join(tmpdir(), 'minarbot-discovery-boundary-'));
   const database = join(root, 'db.sqlite');
   const start = (scriptDirectory: string) => startApp({ database, scriptDirectory });
   try {

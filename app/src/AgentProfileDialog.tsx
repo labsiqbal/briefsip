@@ -1,3 +1,4 @@
+import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { useReturnFocus } from './hooks/useReturnFocus';
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react';
 import { flushSync } from 'react-dom';
@@ -31,7 +32,7 @@ export function AgentForm({ model, firstRun, focusComputer = false, profile: liv
   const [look, setLook] = useState<import('./ui/avatar-shapes').AvatarLook | null>(null);
   const [LookPicker] = useState(() => lazy(() => import('./ui/avatar-shapes').then(module => ({ default: module.AvatarPicker }))));
   const [profile] = useState(liveProfile);
-  const creationKey = 'briefsip-agent-creation';
+  const creationKey = 'minarbot-agent-creation';
   const nameInput = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState(focusComputer ? 'advanced' : 'profile');
   const [avatarOpen, setAvatarOpen] = useState(false);
@@ -45,7 +46,7 @@ export function AgentForm({ model, firstRun, focusComputer = false, profile: liv
   useReturnFocus(exportTrigger, exportOpen);
   useReturnFocus(avatarChange, avatarOpen);
   const [visibilityOpen, setVisibilityOpen] = useState(false);
-  const [recovery, setRecovery] = useState(() => { try { return { command: liveProfile ? null : restoreAgentCreation(sessionStorage.getItem(creationKey)), invalid: false }; } catch { return { command: null, invalid: true }; } });
+  const [recovery, setRecovery] = useState(() => { try { return { command: liveProfile ? null : restoreAgentCreation(readProductStorage(sessionStorage, creationKey)), invalid: false }; } catch { return { command: null, invalid: true }; } });
   const [avatarName, setAvatarName] = useState(profile?.name ?? recovery.command?.name ?? '');
   const [instructionCount, setInstructionCount] = useState((profile?.instructions ?? recovery.command?.instructions ?? '').length);
   const [invalid, setInvalid] = useState(recovery.invalid);
@@ -110,7 +111,7 @@ export function AgentForm({ model, firstRun, focusComputer = false, profile: liv
     if (!profile && !pending.current) Object.assign(data, { runtime });
     if (profile && runtime !== 'api' && runtime !== 'codex' && runtime !== 'claude') Object.assign(data, { harnessModel: harnessModel ?? runtimeChoices.find(choice => choice.runtime === runtime)?.model ?? '' });
     setBusy(true); setError('');
-    function clearRecovery() { if (!profile && restoreAgentCreation(sessionStorage.getItem(creationKey))?.id === data.id) sessionStorage.removeItem(creationKey); }
+    function clearRecovery() { if (!profile && restoreAgentCreation(readProductStorage(sessionStorage, creationKey))?.id === data.id) removeProductStorage(sessionStorage, creationKey); }
     try {
       if (!profile) { restoreAgentCreation(JSON.stringify(data)); sessionStorage.setItem(creationKey, JSON.stringify(data)); }
       pending.current = data;
@@ -119,12 +120,12 @@ export function AgentForm({ model, firstRun, focusComputer = false, profile: liv
       if (!profile && look) {
         const { avatarPng, notifyAvatarFailure } = await import('./ui/avatar-shapes');
         try {
-          const key = `briefsip-avatar:${created.id}`;
+          const key = `minarbot-avatar:${created.id}`;
           const command = { id: crypto.randomUUID(), revision: created.avatar_revision ?? 0, image: await avatarPng(look) };
           sessionStorage.setItem(key, JSON.stringify(command));
           const result = await api<{ revision: number }>(`/api/agents/${created.id}/avatar`, command);
           created.avatar_revision = result.revision;
-          sessionStorage.removeItem(key);
+          removeProductStorage(sessionStorage, key);
         } catch { notifyAvatarFailure(); }
       }
       if (active.current) onCreated(created);
@@ -137,11 +138,11 @@ export function AgentForm({ model, firstRun, focusComputer = false, profile: liv
   const locked = !!pending.current;
   const discardInvalid = async () => {
     if (!await confirm({ title: 'Discard recovery data?', description: 'The agent may already have been created; check the agent list before discarding it.', confirm: 'Discard', danger: true })) return;
-    try { sessionStorage.removeItem(creationKey); setInvalid(false); nameInput.current?.focus(); } catch { setError('Recovery storage could not be cleared.'); }
+    try { removeProductStorage(sessionStorage, creationKey); setInvalid(false); nameInput.current?.focus(); } catch { setError('Recovery storage could not be cleared.'); }
   };
   const discardPending = async () => {
     if (!await confirm({ title: 'Discard this request?', description: 'The agent may already have been created; check the agent list before creating a new one.', confirm: 'Discard recovery', danger: true })) return;
-    try { sessionStorage.removeItem(creationKey); pending.current = null; setRecovery({ command: null, invalid: false }); setError(''); nameInput.current?.focus(); } catch { setError('Recovery storage could not be cleared.'); }
+    try { removeProductStorage(sessionStorage, creationKey); pending.current = null; setRecovery({ command: null, invalid: false }); setError(''); nameInput.current?.focus(); } catch { setError('Recovery storage could not be cleared.'); }
   };
   const loginOptions: SelectOption[] = logins.filter(login => login.runtime === runtime).map(login => ({
     value: loginBinding(login),

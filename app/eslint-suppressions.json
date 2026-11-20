@@ -1,36 +1,11 @@
 {
-  "test-support/script-client.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    }
-  },
-  "slack-output.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 3
-    }
-  },
-  "slack-runner.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    }
-  },
-  "slack-workflows.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    }
-  },
-  "slack.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 5
-    }
-  },
   "src/AgentAvatar.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 1
     }
   },
   "src/AgentComputerSettings.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 2
     },
     "no-restricted-globals": {
@@ -38,32 +13,32 @@
     }
   },
   "src/AgentProfileDialog.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 4
     }
   },
   "src/AgentTemplateImport.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 2
     }
   },
   "src/AgentVisibility.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 1
     }
   },
   "src/App.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 24
     }
   },
   "src/ApprovalCard.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 2
     }
   },
   "src/AudioRecorder.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 3
     },
     "no-restricted-globals": {
@@ -71,12 +46,12 @@
     }
   },
   "src/BackupPanel.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 1
     }
   },
   "src/CompactionPanel.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 1
     },
     "no-restricted-globals": {
@@ -84,32 +59,32 @@
     }
   },
   "src/ComputerViewer.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 4
     }
   },
   "src/ConnectedAppsPanel.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 2
     }
   },
   "src/ConversationAttachments.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 4
     }
   },
   "src/EventConnection.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 1
     }
   },
   "src/GeneralSettings.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 2
     }
   },
   "src/MachinesPanel.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 8
     },
     "no-restricted-globals": {
@@ -117,7 +92,7 @@
     }
   },
   "src/McpPanel.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 3
     },
     "no-restricted-globals": {
@@ -125,47 +100,47 @@
     }
   },
   "src/McpServerPanel.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 1
     }
   },
   "src/MemoryPanel.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 2
     }
   },
   "src/PresentationSettings.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 2
     }
   },
   "src/ProjectEnvironmentPanel.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 1
     }
   },
   "src/Projects.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 3
     }
   },
   "src/ProvidersPanel.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 3
     }
   },
   "src/QuestionCard.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 2
     }
   },
   "src/QueuePanel.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 2
     }
   },
   "src/RightPanelFiles.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 1
     },
     "no-restricted-globals": {
@@ -173,7 +148,7 @@
     }
   },
   "src/RoutineSchedule.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 3
     },
     "no-restricted-globals": {
@@ -181,12 +156,12 @@
     }
   },
   "src/SharedDataPanel.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 1
     }
   },
   "src/SitesPanel.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 4
     },
     "no-restricted-globals": {
@@ -194,47 +169,47 @@
     }
   },
   "src/SkillFolderImport.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 1
     }
   },
   "src/SkillPacksPanel.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 2
     }
   },
   "src/SkillsPanel.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 3
     }
   },
   "src/SourceControl.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 3
     }
   },
   "src/SpeechPlayback.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 3
     }
   },
   "src/TranscriptionPanel.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 1
     }
   },
   "src/UsagePanel.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 1
     }
   },
   "src/WorkflowDirectory.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 1
     }
   },
   "src/WorkflowEditor.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 7
     },
     "no-restricted-globals": {
@@ -242,27 +217,27 @@
     }
   },
   "src/WorkflowInbox.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 3
     }
   },
   "src/WorkflowPanel.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 8
     }
   },
   "src/WorkflowSchedule.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 1
     }
   },
   "src/WorkflowWebhook.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 1
     }
   },
   "src/WorkspacePanel.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 1
     }
   },
@@ -272,12 +247,12 @@
     }
   },
   "src/hub/HubApp.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 10
     }
   },
   "src/hub/HubConnection.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 2
     }
   },
@@ -292,7 +267,7 @@
     }
   },
   "src/ui/MessageCopyButton.ts": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 1
     },
     "no-restricted-globals": {
@@ -310,12 +285,12 @@
     }
   },
   "src/ui/TurnActivity.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 1
     }
   },
   "src/ui/layout.tsx": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 1
     }
   },
@@ -325,23 +300,13 @@
     }
   },
   "src/ui/useTurnStream.ts": {
-    "briefsip-lifecycle/no-component-effects": {
+    "minarbot-lifecycle/no-component-effects": {
       "count": 1
     }
   },
-  "telegram-bridge.ts": {
+  "test-support/script-client.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1
-    }
-  },
-  "telegram-workflows.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 2
-    }
-  },
-  "telegram.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 6
     }
   }
 }

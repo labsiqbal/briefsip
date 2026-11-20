@@ -1,3 +1,4 @@
+import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { usePolling } from './hooks/usePolling';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { ChevronRight, Ellipsis, Folder, FolderOpen, Hash, Plus, X } from 'lucide-react';
@@ -14,21 +15,21 @@ import './Projects.css';
 type Request = <T>(path: string, body?: unknown) => Promise<T>;
 type Agent = { id: string; name: string; avatar_revision?: number };
 type Command = { path: string; body: Record<string, unknown> };
-const storage = 'briefsip:project-command';
+const storage = 'minarbot:project-command';
 const message = (error: unknown) => error instanceof Error ? error.message : 'Project could not load. Try again.';
 export function useProjects(request: Request) {
   const [projects,setProjects] = useState<LocalProject[]>([]), [root,setRoot] = useState(''), [error,setError] = useState(''), [busy,setBusy] = useState(false), [pending,setPending] = useState<Command | null>(null), [invalid,setInvalid] = useState(false);
   const generation = useRef(0), flight = useRef(false), commandRef = useRef<Command | null>(null), confirm = useConfirm();
   const reload = useCallback(async (signal?: AbortSignal) => { const current=++generation.current; const result = await request<{projects: LocalProject[]; root: string}>('/api/projects'); if(!signal?.aborted && current===generation.current){setProjects(result.projects);setRoot(result.root);} },[request]);
-  useEffect(() => { try { const raw = sessionStorage.getItem(storage); if(raw) { const value = JSON.parse(raw); if(!value || typeof value.path !== 'string' || !/^\/api\/projects(?:\/[a-f0-9-]{36}\/(?:edit|archive|delete|thread|sections(?:\/[a-f0-9-]{36}\/edit)?))?$/.test(value.path) || !value.body || !/^[a-f0-9-]{36}$/i.test(value.body.id)) throw new Error(); commandRef.current=value;setPending(value); } } catch {setInvalid(true);} return()=>{generation.current++;}; },[reload]);
+  useEffect(() => { try { const raw = readProductStorage(sessionStorage, storage); if(raw) { const value = JSON.parse(raw); if(!value || typeof value.path !== 'string' || !/^\/api\/projects(?:\/[a-f0-9-]{36}\/(?:edit|archive|delete|thread|sections(?:\/[a-f0-9-]{36}\/edit)?))?$/.test(value.path) || !value.body || !/^[a-f0-9-]{36}$/i.test(value.body.id)) throw new Error(); commandRef.current=value;setPending(value); } } catch {setInvalid(true);} return()=>{generation.current++;}; },[reload]);
   usePolling(async signal => { try { await reload(signal); } catch(error) { if (!signal.aborted) setError(message(error)); } }, { interval: 5000 }, [reload]);
   async function execute(path: string, body: Record<string,unknown>): Promise<boolean> {
     if(flight.current || invalid) return false; const command = commandRef.current ?? {path,body};
     if(commandRef.current && (path !== command.path || JSON.stringify(body) !== JSON.stringify(command.body))) {setError('Resolve the pending project change first.');return false;}
     flight.current=true;setBusy(true);setError('');
-    try {sessionStorage.setItem(storage,JSON.stringify(command));commandRef.current=command;setPending(command);await request(command.path,command.body);await reload();sessionStorage.removeItem(storage);commandRef.current=null;setPending(null);return true;} catch(error){setError(message(error));return false;} finally{flight.current=false;setBusy(false);}
+    try {sessionStorage.setItem(storage,JSON.stringify(command));commandRef.current=command;setPending(command);await request(command.path,command.body);await reload();removeProductStorage(sessionStorage, storage);commandRef.current=null;setPending(null);return true;} catch(error){setError(message(error));return false;} finally{flight.current=false;setBusy(false);}
   }
-  const recovery = <>{error && <Alert tone="error" actions={<Button size="sm" onClick={() => void reload().then(()=>setError('')).catch(error=>setError(message(error)))}>Reload projects</Button>}>{error}</Alert>}{(pending || invalid) && <RecoveryAlert inFlight={busy} tone="warn" title={invalid ? 'Saved project request could not be read' : 'Project change is not confirmed'} actions={<>{pending && <Button size="sm" disabled={busy} onClick={()=>void execute(pending.path,pending.body)}>Retry project change</Button>}<Button size="sm" disabled={busy} onClick={async()=>{if(await confirm({title:'Clear project request?',description:'Check project state first. Changes already saved and folders already created remain. Clearing this request does not undo them.',confirm:'Clear request'}))try{sessionStorage.removeItem(storage);commandRef.current=null;setPending(null);setInvalid(false);await reload();}catch(error){setError(message(error));}}}>Clear request</Button></>} />}</>;
+  const recovery = <>{error && <Alert tone="error" actions={<Button size="sm" onClick={() => void reload().then(()=>setError('')).catch(error=>setError(message(error)))}>Reload projects</Button>}>{error}</Alert>}{(pending || invalid) && <RecoveryAlert inFlight={busy} tone="warn" title={invalid ? 'Saved project request could not be read' : 'Project change is not confirmed'} actions={<>{pending && <Button size="sm" disabled={busy} onClick={()=>void execute(pending.path,pending.body)}>Retry project change</Button>}<Button size="sm" disabled={busy} onClick={async()=>{if(await confirm({title:'Clear project request?',description:'Check project state first. Changes already saved and folders already created remain. Clearing this request does not undo them.',confirm:'Clear request'}))try{removeProductStorage(sessionStorage, storage);commandRef.current=null;setPending(null);setInvalid(false);await reload();}catch(error){setError(message(error));}}}>Clear request</Button></>} />}</>;
   return {projects,root,reload,execute,busy,locked:busy || !!pending || invalid,recovery};
 }
 export type ProjectState = ReturnType<typeof useProjects>;
@@ -95,8 +96,8 @@ export function ProjectSidebar({state,selectedProject,selectedSection,search,onP
   </nav>;
 }
 function ProjectNavigation({project,state,active,selectedSection,search,onProject,onSection,onArchived}:{project:LocalProject;state:ProjectState;active:boolean;selectedSection:string;search:string;onProject:(id:string)=>void;onSection:(id:string)=>void;onArchived:(id:string)=>void}){
-  const key=`briefsip:sidebar-project:${project.id}`;
-  const [expanded,setExpanded]=useState(()=>{try{return localStorage.getItem(key)!=='closed';}catch{return true;}}),[editing,setEditing]=useState<{title:'New section'|'Rename section'|'Rename project';section?:LocalProject['sections'][number]}|null>(null);
+  const key=`minarbot:sidebar-project:${project.id}`;
+  const [expanded,setExpanded]=useState(()=>{try{return readProductStorage(localStorage, key)!=='closed';}catch{return true;}}),[editing,setEditing]=useState<{title:'New section'|'Rename section'|'Rename project';section?:LocalProject['sections'][number]}|null>(null);
   const confirm=useConfirm(), visible=project.sections.filter(section=>!section.archived);
   const changeSection=(section:LocalProject['sections'][number],fields:Record<string,unknown>)=>state.execute(`/api/projects/${project.id}/sections/${section.id}/edit`,{id:crypto.randomUUID(),revision:project.revision,...fields});
   const projectMatch=`${project.name} ${project.description}`.toLocaleLowerCase().includes(search);

@@ -27,11 +27,11 @@ test('IPC permits configured main frame or exact bundled page only', () => {
   mainFrame.url = 'file:///app/evil.html'; assert.equal(trustedSender(event, contents, null, local), false);
   assert.equal(trustedSender({ ...event, senderFrame: null }, contents, null, local), false);
 });
-test('validation falls back from missing environment endpoint to identified Briefsip HTML', async () => {
+test('validation falls back from missing environment endpoint to identified Minarbot HTML', async () => {
   const seen = [];
   assert.equal(await validateServer('http://127.0.0.1:4317', async (url, options) => {
     seen.push(url); assert.equal(options.redirect, 'manual');
-    return url.endsWith('/api/environment') ? new Response('', { status: 404 }) : new Response('<title>Briefsip</title>', { headers: { 'content-type': 'text/html' } });
+    return url.endsWith('/api/environment') ? new Response('', { status: 404 }) : new Response('<title>Minarbot</title>', { headers: { 'content-type': 'text/html' } });
   }), 'http://127.0.0.1:4317/');
   assert.deepEqual(seen, ['http://127.0.0.1:4317/api/environment', 'http://127.0.0.1:4317/']);
 });
@@ -39,7 +39,7 @@ test('validation accepts environment metadata, rejects redirects, wrong app, HTT
   assert.equal(await validateServer('https://nuc.test', async () => Response.json({ environmentId: 'nuc' })), 'https://nuc.test/');
   await assert.rejects(validateServer('https://nuc.test', async () => new Response('', { status: 302 })), /redirected/);
   await assert.rejects(validateServer('https://nuc.test', async () => new Response('', { status: 403 })), /403/);
-  await assert.rejects(validateServer('https://nuc.test', async (url) => url.endsWith('/api/environment') ? new Response('', { status: 404 }) : new Response('<title>Other</title>', { headers: { 'content-type': 'text/html' } })), /Briefsip app/);
+  await assert.rejects(validateServer('https://nuc.test', async (url) => url.endsWith('/api/environment') ? new Response('', { status: 404 }) : new Response('<title>Other</title>', { headers: { 'content-type': 'text/html' } })), /Minarbot app/);
 });
 
 test('validation bounds identity responses from untrusted servers', async () => {

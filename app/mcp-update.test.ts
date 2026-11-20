@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 
 test('tested MCP updates bind origin/revision, rotate credentials and invalidate grants exactly once', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-mcp-update-')), oldToken = 'old-fixture-token', newToken = 'new-fixture-token';
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-mcp-update-')), oldToken = 'old-fixture-token', newToken = 'new-fixture-token';
   const headers: string[] = []; let description = 'Original', release: (() => void) | undefined, delay = false;
   const remote = createServer(async (req, res) => {
     headers.push(req.headers.authorization ?? '');

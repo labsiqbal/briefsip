@@ -14,20 +14,20 @@ import { createHubAuthority } from './project-authority.ts';
 import { createClerkVerifier, createStubVerifier, type SessionIdentity, type SessionVerifier } from './sessions.ts';
 import { createHubServer, startHub } from './server.ts';
 
-const accounts = 'accounts.briefsip.test', issuer = 'https://clerk.example.test';
+const accounts = 'accounts.minarbot.test', issuer = 'https://clerk.example.test';
 const origin = (host: string) => `https://${host}`;
 type Response = { status: number; headers: IncomingMessage['headers']; data: any; raw: string; cookies: string[] };
 async function fixture(t: TestContext, settings: { verifier?: SessionVerifier; trusted?: string[]; dbPath?: string } = {}) {
   let clock = Date.now();
   const now = () => clock, db = testDatabase(settings.dbPath ?? ':memory:'); initializeHubSchema(db);
-  const authority = createHubAuthority(db, { domain: 'briefsip.test', mailboxKey: Buffer.alloc(32, 8), now });
+  const authority = createHubAuthority(db, { domain: 'minarbot.test', mailboxKey: Buffer.alloc(32, 8), now });
   const identities = Object.fromEntries(['alice', 'bob', 'eve', 'outside'].map(subject => [subject, { issuer, subject, sessionId: `${subject}-sid`, expiresAt: now() + 3600000, verifiedMailboxes: [`${subject}@example.test`] } satisfies SessionIdentity]));
   const ids = Object.fromEntries(Object.entries(identities).map(([name, identity]) => [name, authority.provisionAccount(identity, name !== 'outside')]));
   const alpha = authority.createProject(ids.alice, 'alpha', 'Alpha'), beta = authority.createProject(ids.bob, 'beta', 'Beta');
   const ctx = authority.resolveProject(alpha.host, ids.alice);
   const invitation = authority.invite(ctx, { mailbox: 'bob@example.test', role: 'member', expiresAt: now() + 100000 });
   authority.acceptInvite(authority.resolveProject(alpha.host, ids.bob), invitation.invitationId, invitation.token, identities.bob);
-  const hub = createHubServer({ authority, verifier: settings.verifier ?? createStubVerifier(new Map(Object.entries(identities))), domain: 'briefsip.test', accountsHost: accounts, pollIntervalMs: 10, trustedGatewayAddresses: settings.trusted });
+  const hub = createHubServer({ authority, verifier: settings.verifier ?? createStubVerifier(new Map(Object.entries(identities))), domain: 'minarbot.test', accountsHost: accounts, pollIntervalMs: 10, trustedGatewayAddresses: settings.trusted });
   hub.server.listen(0, '127.0.0.1'); await once(hub.server, 'listening');
   const address = hub.server.address(); assert(address && typeof address !== 'string'); const port = address.port;
   t.after(async () => { await hub.close(); if (db.isOpen) db.close(); });
@@ -82,8 +82,8 @@ async function fixture(t: TestContext, settings: { verifier?: SessionVerifier; t
 
 test('gateway: raw Host allowlist, reserved names, duplicates, aliases, uniform missing and forwarded-host denial', async t => {
   const f = await fixture(t);
-  const unknown = await f.request('missing.briefsip.test', '/api/project'); assert.equal(unknown.status, 404);
-  for (const host of ['briefsip.test', 'www.briefsip.test', 'api.briefsip.test', 'ALPHA.briefsip.test', 'alpha.briefsip.test.', 'alpha.briefsip.test:443', 'alpha.briefsip.test.evil.test', 'xn--abc.briefsip.test', 'hub-origin.briefsip.test']) {
+  const unknown = await f.request('missing.minarbot.test', '/api/project'); assert.equal(unknown.status, 404);
+  for (const host of ['minarbot.test', 'www.minarbot.test', 'api.minarbot.test', 'ALPHA.minarbot.test', 'alpha.minarbot.test.', 'alpha.minarbot.test:443', 'alpha.minarbot.test.evil.test', 'xn--abc.minarbot.test', 'hub-origin.minarbot.test']) {
     const result = await f.request(host, '/api/project'); assert.equal(result.status, 404, host); assert.deepEqual(result.data, unknown.data);
   }
   for (const headers of [{ 'X-Forwarded-Host': f.beta.host }, { Forwarded: `host=${f.beta.host}` }, { 'X-Forwarded-Host': `${f.alpha.host},${f.beta.host}` }] as Record<string, string>[]) assert.equal((await f.request(f.alpha.host, '/auth/start', { headers })).status, 404);
@@ -217,7 +217,7 @@ test('P1-C mount hook: only exact central /node upgrades, no browser credentials
   assert.throws(() => f.hub.mountNodeUpgrade(() => {}), /already/);
   assert.match(await upgrade(f.alpha.host), /^HTTP\/1.1 404/);
   assert.match(await upgrade(accounts, '/node?token=leak'), /^HTTP\/1.1 404/);
-  assert.match(await upgrade(accounts, '/node', '\r\nOrigin: https://accounts.briefsip.test'), /^HTTP\/1.1 404/);
+  assert.match(await upgrade(accounts, '/node', '\r\nOrigin: https://accounts.minarbot.test'), /^HTTP\/1.1 404/);
   assert.match(await upgrade(accounts, '/node', '\r\nCookie: __Host-session=leak'), /^HTTP\/1.1 404/);
   assert.match(await upgrade(accounts), /^HTTP\/1.1 401/); assert.equal(calls, 1);
   unmount(); assert.match(await upgrade(accounts), /^HTTP\/1.1 404/);
@@ -230,19 +230,19 @@ function jwt(claims: Record<string, unknown>, header: Record<string, unknown> = 
   return `${body}.${sign('RSA-SHA256', Buffer.from(body), privateKey).toString('base64url')}`;
 }
 const jwtNow = 1800000000000;
-const claims = { iss: issuer, sub: 'alice', sid: 'session-alice', azp: origin(accounts), iat: jwtNow / 1000 - 5, nbf: jwtNow / 1000 - 5, exp: jwtNow / 1000 + 60, aud: 'briefsip-hub', email: 'alice@example.test', email_verified: true };
-function clerk() { return createClerkVerifier({ issuer, accountsOrigin: origin(accounts), audience: 'briefsip-hub', jwks: { keys: [jwk] }, now: () => jwtNow }); }
+const claims = { iss: issuer, sub: 'alice', sid: 'session-alice', azp: origin(accounts), iat: jwtNow / 1000 - 5, nbf: jwtNow / 1000 - 5, exp: jwtNow / 1000 + 60, aud: 'minarbot-hub', email: 'alice@example.test', email_verified: true };
+function clerk() { return createClerkVerifier({ issuer, accountsOrigin: origin(accounts), audience: 'minarbot-hub', jwks: { keys: [jwk] }, now: () => jwtNow }); }
 
 test('offline Clerk fixtures: valid RS256/JWKS, verified mailbox evidence and audience array', async () => {
   const verifier = clerk(), result = await verifier.verify(jwt(claims));
   assert.deepEqual(result, { issuer, subject: 'alice', sessionId: 'session-alice', expiresAt: jwtNow + 60000, verifiedMailboxes: ['alice@example.test'] });
-  assert.equal((await verifier.verify(jwt({ ...claims, aud: ['other', 'briefsip-hub'] }))).subject, 'alice');
+  assert.equal((await verifier.verify(jwt({ ...claims, aud: ['other', 'minarbot-hub'] }))).subject, 'alice');
   assert.deepEqual((await verifier.verify(jwt({ ...claims, email_verified: false }))).verifiedMailboxes, []);
 });
 
 test('offline Clerk fixtures: expiry, issuer, azp, audience, time, sid, pending session and signature failures', async () => {
   const verifier = clerk();
-  for (const changed of [{ exp: jwtNow / 1000 }, { iss: 'https://other.example.test' }, { azp: origin('alpha.briefsip.test') }, { aud: 'wrong' }, { aud: undefined }, { nbf: jwtNow / 1000 + 1 }, { iat: jwtNow / 1000 + 1 }, { sid: '' }, { sub: '' }, { sts: 'pending' }, { exp: '1800000060' }, { nbf: undefined }]) {
+  for (const changed of [{ exp: jwtNow / 1000 }, { iss: 'https://other.example.test' }, { azp: origin('alpha.minarbot.test') }, { aud: 'wrong' }, { aud: undefined }, { nbf: jwtNow / 1000 + 1 }, { iat: jwtNow / 1000 + 1 }, { sid: '' }, { sub: '' }, { sts: 'pending' }, { exp: '1800000060' }, { nbf: undefined }]) {
     await assert.rejects(verifier.verify(jwt({ ...claims, ...changed })), error => error instanceof ProtocolError && error.status === 401, JSON.stringify(changed));
   }
   await assert.rejects(verifier.verify(jwt(claims, { alg: 'HS256', kid: jwk.kid })), /invalid/);
@@ -255,7 +255,7 @@ test('offline Clerk fixtures: expiry, issuer, azp, audience, time, sid, pending 
 });
 
 test('offline Clerk config: HTTPS, key type, modulus, key IDs and no private JWKS', () => {
-  assert.throws(() => createClerkVerifier({ issuer, accountsOrigin: 'http://accounts.briefsip.test', jwks: { keys: [jwk] } }));
+  assert.throws(() => createClerkVerifier({ issuer, accountsOrigin: 'http://accounts.minarbot.test', jwks: { keys: [jwk] } }));
   assert.throws(() => createClerkVerifier({ issuer, accountsOrigin: origin(accounts), jwks: { keys: [jwk, jwk] } }));
   const weak = generateKeyPairSync('rsa', { modulusLength: 1024 }).publicKey.export({ format: 'jwk' });
   assert.throws(() => createClerkVerifier({ issuer, accountsOrigin: origin(accounts), jwks: { keys: [{ ...weak, kid: 'weak' }] } }));
@@ -263,7 +263,7 @@ test('offline Clerk config: HTTPS, key type, modulus, key IDs and no private JWK
 });
 
 test('real HTTP Clerk adapter: only central verified bearer admitted; token expiry bounds project cookie', async t => {
-  const actual = Math.floor(Date.now() / 1000), verifier = createClerkVerifier({ issuer, accountsOrigin: origin(accounts), audience: 'briefsip-hub', jwks: { keys: [jwk] } });
+  const actual = Math.floor(Date.now() / 1000), verifier = createClerkVerifier({ issuer, accountsOrigin: origin(accounts), audience: 'minarbot-hub', jwks: { keys: [jwk] } });
   const f = await fixture(t, { verifier }), token = jwt({ ...claims, sid: 'alice-sid', iat: actual - 1, nbf: actual - 1, exp: actual + 60 });
   const central = await f.central(token), session = await f.login('alice', f.alpha.host, central);
   assert.equal(session.data.expiresAt, (actual + 60) * 1000);
@@ -273,17 +273,17 @@ test('real HTTP Clerk adapter: only central verified bearer admitted; token expi
 });
 
 test('documented starter: explicit isolated config, loopback binding, no automatic account provisioning', async t => {
-  const dir = mkdtempSync(resolve(tmpdir(), 'briefsip-hub-start-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const dir = mkdtempSync(resolve(tmpdir(), 'minarbot-hub-start-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
   const key = resolve(dir, 'mailbox.key'), tokens = resolve(dir, 'tokens.json'), db = resolve(dir, 'pilot.sqlite');
   writeFileSync(key, randomBytes(32), { mode: 0o600 }); writeFileSync(tokens, '{}', { mode: 0o600 });
-  const hub = startHub({ domain: 'briefsip.test', accountsHost: accounts, dataPath: db, mailboxKeyPath: key, port: 0, identity: { mode: 'stub', tokensPath: tokens } });
+  const hub = startHub({ domain: 'minarbot.test', accountsHost: accounts, dataPath: db, mailboxKeyPath: key, port: 0, identity: { mode: 'stub', tokensPath: tokens } });
   await once(hub.server, 'listening'); const address = hub.server.address(); assert(address && typeof address !== 'string'); assert.equal(address.address, '127.0.0.1');
   assert.equal(hub.authority.one('SELECT count(*) AS n FROM accounts')!.n, 0);
   await hub.close(); assert(readFileSync(db).length > 0);
 });
 
 test('session rotation and SQLite reopen preserve sessions/denials without replaying handoffs', async t => {
-  const dir = mkdtempSync(resolve(tmpdir(), 'briefsip-hub-reopen-')), file = resolve(dir, 'hub.sqlite');
+  const dir = mkdtempSync(resolve(tmpdir(), 'minarbot-hub-reopen-')), file = resolve(dir, 'hub.sqlite');
   const f = await fixture(t, { dbPath: file }), parent = await f.central(), first = await f.login('alice', f.alpha.host, parent);
   const started = await f.start(), code = await f.handoff(parent, started);
   const rotated = await f.request(f.alpha.host, '/auth/redeem', { body: code, cookies: [...started.cookies, first.cookies[0]], csrf: started.data.state });
@@ -292,16 +292,16 @@ test('session rotation and SQLite reopen preserve sessions/denials without repla
   assert(!f.authority.all('SELECT digest FROM hub_browser_sessions').some(row => rotated.cookies[0].endsWith(String(row.digest))));
   const address = f.hub.server.address(); assert(address && typeof address !== 'string'); await f.hub.close(); f.db.close();
   let database = testDatabase(file);
-  let authority = createHubAuthority(database, { domain: 'briefsip.test', mailboxKey: Buffer.alloc(32, 8), now: f.now });
-  let reopened = createHubServer({ authority, verifier: createStubVerifier(new Map(Object.entries(f.identities))), accountsHost: accounts, domain: 'briefsip.test' });
+  let authority = createHubAuthority(database, { domain: 'minarbot.test', mailboxKey: Buffer.alloc(32, 8), now: f.now });
+  let reopened = createHubServer({ authority, verifier: createStubVerifier(new Map(Object.entries(f.identities))), accountsHost: accounts, domain: 'minarbot.test' });
   t.after(async () => { await reopened.close(); database.close(); rmSync(dir, { recursive: true, force: true }); });
   reopened.server.listen(address.port, '127.0.0.1'); await once(reopened.server, 'listening');
   assert.equal((await f.request(f.alpha.host, '/api/session', { cookies: rotated.cookies })).status, 200);
   assert.equal((await f.redeem(f.alpha.host, started, code)).status, 401);
   assert.equal((await f.request(accounts, '/auth/logout', { body: { global: true }, cookies: parent.cookies, csrf: parent.data.csrf })).status, 200);
   await reopened.close(); database.close(); database = testDatabase(file);
-  authority = createHubAuthority(database, { domain: 'briefsip.test', mailboxKey: Buffer.alloc(32, 8), now: f.now });
-  reopened = createHubServer({ authority, verifier: createStubVerifier(new Map(Object.entries(f.identities))), accountsHost: accounts, domain: 'briefsip.test' });
+  authority = createHubAuthority(database, { domain: 'minarbot.test', mailboxKey: Buffer.alloc(32, 8), now: f.now });
+  reopened = createHubServer({ authority, verifier: createStubVerifier(new Map(Object.entries(f.identities))), accountsHost: accounts, domain: 'minarbot.test' });
   reopened.server.listen(address.port, '127.0.0.1'); await once(reopened.server, 'listening');
   assert.equal((await f.request(f.alpha.host, '/api/session', { cookies: rotated.cookies })).status, 401);
   const bootstrap = await f.request(accounts, '/auth/bootstrap');

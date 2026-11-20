@@ -20,10 +20,10 @@ export function legacyCheckpointFixture(db: DatabaseSync, bindings: Map<string, 
           PATH: '/usr/bin:/bin',
           GIT_CONFIG_NOSYSTEM: '1',
           GIT_CONFIG_GLOBAL: '/dev/null',
-          GIT_AUTHOR_NAME: 'Briefsip',
-          GIT_AUTHOR_EMAIL: 'checkpoints@briefsip.local',
-          GIT_COMMITTER_NAME: 'Briefsip',
-          GIT_COMMITTER_EMAIL: 'checkpoints@briefsip.local',
+          GIT_AUTHOR_NAME: 'Minarbot',
+          GIT_AUTHOR_EMAIL: 'checkpoints@minarbot.local',
+          GIT_COMMITTER_NAME: 'Minarbot',
+          GIT_COMMITTER_EMAIL: 'checkpoints@minarbot.local',
         },
       }).trim();
     }
@@ -32,10 +32,10 @@ export function legacyCheckpointFixture(db: DatabaseSync, bindings: Map<string, 
   return {
     capture(agent: string, turn: string) {
       const { directory, path, git } = repo(agent);
-      const ref = `refs/briefsip/checkpoints/${turn}`;
+      const ref = `refs/minarbot/checkpoints/${turn}`;
       const blob = git(['hash-object', '--no-filters', '-w', '--stdin'], readFileSync(join(directory, path)));
       const tree = git(['mktree'], `100644 blob ${blob}\t${path}\n`);
-      const hash = git(['commit-tree', tree, '-m', `Briefsip checkpoint ${turn}`]);
+      const hash = git(['commit-tree', tree, '-m', `Minarbot checkpoint ${turn}`]);
       git(['update-ref', ref, hash]);
       // Seed the pre-cutover journal row and ref using their original field layout.
       db.prepare("INSERT INTO workspace_checkpoints(turn,agent,directory,ref,hash,state,created) VALUES (?,?,?,?,?,'done',?)")
@@ -43,7 +43,7 @@ export function legacyCheckpointFixture(db: DatabaseSync, bindings: Map<string, 
     },
     preview(agent: string, turn: string) {
       const { directory, path, git } = repo(agent);
-      const ref = `refs/briefsip/checkpoints/${turn}`;
+      const ref = `refs/minarbot/checkpoints/${turn}`;
       const saved = git(['rev-parse', ref]);
       const before = git(['rev-parse', `${ref}:${path}`]);
       const current = git(['hash-object', '--no-filters', '--stdin'], readFileSync(join(directory, path)));

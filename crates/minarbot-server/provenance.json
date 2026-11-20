@@ -1,0 +1,100 @@
+{
+  "scope": "SQLite schema, provider snapshot delivery, persisted delegation/room history, silence filtering, fork context and workspace Git carried from Minarbot existing adaptations; canonical invitation encryption/mailbox verification, application sync cursors and visibility schedule fences",
+  "manifest": "app/agent-delegation.provenance.json",
+  "localPaths": [
+    "crates/minarbot-server/build.rs",
+    "crates/minarbot-server/src/db.rs",
+    "crates/minarbot-server/src/events.rs",
+    "crates/minarbot-server/src/files/git.rs",
+    "crates/minarbot-server/src/files/git_writes.rs",
+    "crates/minarbot-server/src/data/history.rs",
+    "crates/minarbot-server/src/data/conversations.rs",
+    "crates/minarbot-server/src/data/schema.sql",
+    "crates/minarbot-server/src/data/access/invitations.rs",
+    "crates/minarbot-server/src/data/sync.rs",
+    "crates/minarbot-server/src/data/options.rs",
+    "crates/minarbot-server/src/data/sync_projection.rs"
+  ],
+  "sources": [
+    {
+      "repository": "https://github.com/pingdotgg/t3code",
+      "revision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE"
+    },
+    {
+      "repository": "https://github.com/NousResearch/hermes-agent",
+      "revision": "d923a5eb487a17c0a68801bba9ef0f56c81040a8",
+      "license": "MIT",
+      "notice": "app/agent-delegation.LICENSE"
+    }
+  ],
+  "workspaceSourceControlEntries": [
+    {
+      "sourcePath": "apps/server/src/vcs/GitVcsDriver.ts",
+      "symbols": [
+        "captureCheckpoint",
+        "restoreCheckpoint",
+        "write-tree",
+        "commit-tree",
+        "update-ref"
+      ],
+      "adaptation": "Rust port retaining temporary indices, local Git plumbing, private refs, bounded snapshots and durable uncertainty journals.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "f44227ab093c129d26d1a3898c583d74b3522bddc117af788cff9b8094323e88",
+      "localPath": "crates/minarbot-server/src/files/git_writes.rs",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/workspace-git.test.ts",
+      "via": "app/workspace-git.ts"
+    },
+    {
+      "sourcePath": "apps/server/src/vcs/GitVcsDriverCore.ts",
+      "symbols": [
+        "status",
+        "commit",
+        "createWorktree"
+      ],
+      "adaptation": "Rust port retaining temporary indices, local Git plumbing, private refs, bounded snapshots and durable uncertainty journals.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "2f14761316e748cf3e1059fe3969d57d899708b9edbba4f6aba7d648fd3d1b40",
+      "localPath": "crates/minarbot-server/src/files/git.rs",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/workspace-git.test.ts",
+      "via": "app/workspace-git.ts"
+    },
+    {
+      "sourcePath": "apps/server/src/checkpointing/CheckpointStore.ts",
+      "symbols": [
+        "CheckpointStore",
+        "captureCheckpoint",
+        "restoreCheckpoint"
+      ],
+      "adaptation": "Rust port retaining temporary indices, local Git plumbing, private refs, bounded snapshots and durable uncertainty journals.",
+      "sourceRevision": "0af2d21647416e3092347d4be82af6cfa6fa6b2d",
+      "sourceSha256": "a1b1a7f354011b329472d01b3b0d03c877a010e5eb7a27acb4e0f0eff406cf4a",
+      "localPath": "crates/minarbot-server/src/files/git_writes.rs",
+      "license": "MIT",
+      "notice": "app/t3/NOTICE",
+      "dependencies": [],
+      "compatibilityCheck": "app/workspace-git.test.ts",
+      "via": "app/workspace-git.ts"
+    }
+  ],
+  "launcherIntegration": {
+    "manifest": "crates/minarbot-launcher/provenance.json",
+    "notice": "crates/minarbot-launcher/NOTICE",
+    "localPaths": [
+      "crates/minarbot-server/src/updates/mod.rs",
+      "crates/minarbot-server/src/updates/release.rs"
+    ],
+    "via": [
+      "app/updates.ts",
+      "scripts/minarbot-launcher.mjs"
+    ],
+    "compatibilityCheck": "MINARBOT_TEST_SERVER=rust MINARBOT_TEST_LAUNCHER=rust node --experimental-strip-types --test app/updates.test.ts app/launcher.test.ts"
+  }
+}

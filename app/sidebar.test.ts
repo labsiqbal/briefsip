@@ -10,7 +10,7 @@ import { startApp } from './test-bridge.ts';
 import { restoreWorkspace } from './test-support/backup.ts';
 
 test('sidebar validates unique membership, names, IDs and bounded settings', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-sidebar-valid-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-sidebar-valid-'));
   const app = await startApp({ database: join(directory, 'state.sqlite') });
   const post = (path: string, body: unknown) => fetch(app.origin + path, {
     method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -32,7 +32,7 @@ test('sidebar validates unique membership, names, IDs and bounded settings', asy
 });
 
 test('sidebar HTTP edits retain agents/history through delete, conflicts, retry, restart and backup', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-sidebar-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-sidebar-'));
   const provider = createServer(async (request, response) => { for await (const chunk of request) {} response.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'History retained.' } }] })); });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
   const address = provider.address(); assert(address && typeof address !== 'string');
@@ -103,7 +103,7 @@ test('sidebar HTTP edits retain agents/history through delete, conflicts, retry,
 });
 
 test('sidebar summary bounds entries and text, redacts credentials, and selects latest explicit remote messages', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-sidebar-summary-')), database = join(directory, 'state.sqlite');
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-sidebar-summary-')), database = join(directory, 'state.sqlite');
   const app = await startApp({ database, baseURL: 'http://127.0.0.1:1/v1', apiKey: 'saved-provider-credential' });
   const db = testDatabase(database);
   try {

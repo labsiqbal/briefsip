@@ -3,9 +3,9 @@ body { overflow: auto; }
 .comparison { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 24px; padding: 20px; }
 .comparison > section { min-width: 0; }
 .fixture-label { font-size: 14px; color: var(--color-text-secondary); margin: 0 0 24px; }
-.briefsip-side .chat { height: auto; min-width: 0; overflow: visible; }
-.briefsip-side .transcript__col { width: 100%; min-height: 0; }
-.briefsip-side .composer-area { padding-top: 24px; }
+.minarbot-side .chat { height: auto; min-width: 0; overflow: visible; }
+.minarbot-side .transcript__col { width: 100%; min-height: 0; }
+.minarbot-side .composer-area { padding-top: 24px; }
 .t3-side { font-size: .875rem; line-height: 1.625; }
 .ref-lane { max-width: 46rem; margin: auto; }
 .ref-user { display: flex; flex-direction: column; align-items: end; gap: 4px; margin-bottom: 16px; }

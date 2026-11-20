@@ -12,7 +12,7 @@ import { encryptMail, mailLookupDigest, serializeMailEnvelope } from './test-sup
 import { waitFor } from './test-support/rust-connector-fixture.ts';
 
 test('Rust mail retries an exact envelope once and fences missing keys, old authority and the idempotency horizon', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-mail-retry-'));
+  const root = mkdtempSync(join(tmpdir(), 'minarbot-rust-mail-retry-'));
   const database = join(root, 'app.sqlite');
   const db = testDatabase(database);
   installFrozenNodeSchema(db);
@@ -49,7 +49,7 @@ test('Rust mail retries an exact envelope once and fences missing keys, old auth
   const options = {
     database, fixedClock: now,
     auth: { secretKey: 'sk_test_fixture', publishableKey: 'pk_test_fixture', issuer: 'https://fixture.clerk.accounts.dev',
-      origin: 'https://briefsip.example', development: true, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString() },
+      origin: 'https://minarbot.example', development: true, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString() },
     mailApiKey: 'synthetic-mail-key', mailEndpoint: `http://127.0.0.1:${address.port}/emails`,
     testKeyring: { [`mail-aead/${keyId}`]: key.toString('base64url'), 'sync-hmac/v1': randomBytes(32).toString('base64url') },
   };
@@ -70,7 +70,7 @@ test('Rust mail retries an exact envelope once and fences missing keys, old auth
     await waitFor(() => state(first).state === 'sent', 'Mail retry did not settle');
     assert.equal(requests.length, 2);
     assert.deepEqual(requests[0], requests[1]);
-    assert.equal(requests[0].key, `briefsip-invite/${first}/1`);
+    assert.equal(requests[0].key, `minarbot-invite/${first}/1`);
     assert.equal(state(first).bytes, 0);
     assert.equal(state(first).revision, 2);
     assert.equal(state(locked).attempts, 0);

@@ -36,7 +36,7 @@ async function fixture() {
   writeFileSync(settings.envFile, '', { mode: 0o600 });
   const save = () => writeFileSync(config, JSON.stringify(settings), { mode: 0o600 }); save();
   const options = { launcherSocket: join(data, 'launcher.sock'), releasesDir: releases };
-  const db = testDatabase(join(data, 'briefsip.sqlite')); db.exec("CREATE TABLE data(value TEXT); INSERT INTO data VALUES('preserved')"); db.close();
+  const db = testDatabase(join(data, 'minarbot.sqlite')); db.exec("CREATE TABLE data(value TEXT); INSERT INTO data VALUES('preserved')"); db.close();
   const processes: ChildProcess[] = [];
   const publish = (version: string) => {
     const id = version + '-12345678', release = join(releases, id); mkdirSync(release);
@@ -76,16 +76,16 @@ test('launcher parses literal env, overrides routing and delivers native socket 
   try {
     const first = f.publish('1.0.0'); selectRelease(f.releases, 'current', first.id);
     const canary = join(f.dir, 'must-not-exist');
-    writeFileSync(f.settings.envFile, `export LAUNCHER_QUOTED="line one\nline two"\nLAUNCHER_LITERAL=$(touch ${canary})\nLAUNCHER_SINGLE='literal # value'\nLAUNCHER_EMPTY=\nPORT=1\nBRIEFSIP_DATA_DIR=/wrong\nBRIEFSIP_UPDATE_TRIAL=untrusted\n`);
+    writeFileSync(f.settings.envFile, `export LAUNCHER_QUOTED="line one\nline two"\nLAUNCHER_LITERAL=$(touch ${canary})\nLAUNCHER_SINGLE='literal # value'\nLAUNCHER_EMPTY=\nPORT=1\nMINARBOT_DATA_DIR=/wrong\nMINARBOT_UPDATE_TRIAL=untrusted\n`);
     let process = f.start(); const initial = await until(async () => await f.read());
     assert.equal(initial.connected, true); assert.equal(initial.env.LAUNCHER_QUOTED, 'line one\nline two');
     assert.equal(initial.env.LAUNCHER_SINGLE, 'literal # value'); assert.equal(initial.env.LAUNCHER_EMPTY, '');
     assert.equal(initial.env.LAUNCHER_LITERAL, `$(touch ${canary})`); assert(!existsSync(canary));
-    assert.equal(initial.env.PORT, String(f.settings.port)); assert.equal(initial.env.BRIEFSIP_DATA_DIR, f.data); assert.equal(initial.env.BRIEFSIP_UPDATE_TRIAL, undefined);
+    assert.equal(initial.env.PORT, String(f.settings.port)); assert.equal(initial.env.MINARBOT_DATA_DIR, f.data); assert.equal(initial.env.MINARBOT_UPDATE_TRIAL, undefined);
     const next = f.publish('1.0.1'), request = { type: 'apply', id: randomUUID(), target: next.id, version: next.version };
     await launcherRequest(f.options, request);
     await until(async () => { const value = await f.read(); return value.committed === request.id && value; });
-    const snapshot = join(f.data, '.updates', request.id, 'briefsip.sqlite'); assert.equal(statSync(snapshot).mode & 0o777, 0o600);
+    const snapshot = join(f.data, '.updates', request.id, 'minarbot.sqlite'); assert.equal(statSync(snapshot).mode & 0o777, 0o600);
     assert.equal(statSync(join(f.data, 'update-state.json')).mode & 0o777, 0o600); assert.equal(statSync(f.options.launcherSocket).mode & 0o777, 0o600);
     await stop(process.child); process = f.start(); await until(async () => (await f.read()).version === next.version);
     assert.equal((await launcherRequest(f.options, request)).accepted, true);
@@ -98,7 +98,7 @@ test('launcher rejects corrupt releases and strict socket requests without stopp
   try {
     const first = f.publish('1.0.0'); selectRelease(f.releases, 'current', first.id); f.start(); await until(async () => await f.read());
     for (const request of [{ type: 'status', extra: 1 }, { type: 'other' }, { type: 'apply', id: 'bad', target: first.id, version: first.version }]) await assert.rejects(launcherRequest(f.options, request), /control request|update request/);
-    const bad = f.publish('1.0.1'); writeFileSync(join(bad.release, 'bin/briefsip-server'), 'tampered');
+    const bad = f.publish('1.0.1'); writeFileSync(join(bad.release, 'bin/minarbot-server'), 'tampered');
     await assert.rejects(launcherRequest(f.options, { type: 'apply', id: randomUUID(), target: bad.id, version: bad.version }), /manifest mismatch/);
     const oversized = createConnection(f.options.launcherSocket); oversized.on('error', () => {}); const closed = once(oversized, 'close'); oversized.write('x'.repeat(4097)); await closed;
     assert.equal((await launcherRequest(f.options, { type: 'status' })).current, first.id);
@@ -110,7 +110,7 @@ test('launcher rejects tampered startup and public persisted state', async () =>
   const f = await fixture();
   try {
     const first = f.publish('1.0.0'); selectRelease(f.releases, 'current', first.id);
-    writeFileSync(join(first.release, 'bin/briefsip-server'), 'tampered'); await rejectsStart(f, /manifest mismatch/);
+    writeFileSync(join(first.release, 'bin/minarbot-server'), 'tampered'); await rejectsStart(f, /manifest mismatch/);
     const state = join(f.data, 'update-state.json'); chmodSync(state, 0o644); await rejectsStart(f, /private files/);
   } finally { await f.close(); }
 });
@@ -120,7 +120,7 @@ test('Rust launcher selects native release, checks chunked health, snapshots, an
   try {
     const first = f.publish('1.0.0'); selectRelease(f.releases, 'current', first.id); const process = f.start(); await until(async () => await f.read());
     const next = f.publish('1.0.1'); 
-    execFileSync('rustc', [fileURLToPath(new URL('../crates/briefsip-launcher/tests/fixtures/server.rs', import.meta.url)), '-o', join(next.release, 'bin/briefsip-server')]);
+    execFileSync('rustc', [fileURLToPath(new URL('../crates/minarbot-launcher/tests/fixtures/server.rs', import.meta.url)), '-o', join(next.release, 'bin/minarbot-server')]);
     writeFileSync(join(next.release, 'version.txt'), next.version); writeFileSync(join(next.release, 'server.ts'), "throw new Error('Node fallback must not run')"); next.seal();
     await launcherRequest(f.options, { type: 'apply', id: randomUUID(), target: next.id, version: next.version });
     await until(async () => ((await launcherRequest(f.options, { type: 'status' })).lastAttempt as { status?: string } | undefined)?.status === 'done');
@@ -134,7 +134,7 @@ test('launcher updates and snapshots after its own release binary was deleted', 
   const f = await fixture();
   // A long-running launcher keeps the binary it started from; release cleanup can delete that file.
   const copy = join(f.dir, 'launcher-copy');
-  copyFileSync(rustBinary('briefsip-launcher', process.env.BRIEFSIP_RUST_LAUNCHER_BINARY), copy); chmodSync(copy, 0o700);
+  copyFileSync(rustBinary('minarbot-launcher', process.env.MINARBOT_RUST_LAUNCHER_BINARY), copy); chmodSync(copy, 0o700);
   const first = f.publish('1.0.0'); selectRelease(f.releases, 'current', first.id);
   const child = spawn(copy, ['--config', f.config], { stdio: ['ignore', 'pipe', 'pipe'] });
   let log = ''; child.stdout!.on('data', b => { log += b; }); child.stderr!.on('data', b => { log += b; });
@@ -142,7 +142,7 @@ test('launcher updates and snapshots after its own release binary was deleted', 
     await until(async () => await f.read());
     rmSync(copy);
     const next = f.publish('1.0.1');
-    execFileSync('rustc', [fileURLToPath(new URL('../crates/briefsip-launcher/tests/fixtures/server.rs', import.meta.url)), '-o', join(next.release, 'bin/briefsip-server')]);
+    execFileSync('rustc', [fileURLToPath(new URL('../crates/minarbot-launcher/tests/fixtures/server.rs', import.meta.url)), '-o', join(next.release, 'bin/minarbot-server')]);
     writeFileSync(join(next.release, 'version.txt'), next.version); next.seal();
     await launcherRequest(f.options, { type: 'apply', id: randomUUID(), target: next.id, version: next.version });
     const attempt = await until(async () => {

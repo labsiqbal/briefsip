@@ -35,7 +35,7 @@ test('preview compacts user text and renders Markdown text without link destinat
   assert.equal(preview('  ')?.assistantText, null);
   assert.equal(preview('x'.repeat(2000))?.assistantText?.length, 1500);
   assert.equal(preview('| Name | Value |\n| --- | --- |\n| A | B |')?.assistantText, 'Name Value A B');
-  assert.equal(preview('<img src="https://tracker.test">')?.assistantText, '<img src="https://tracker.test">', 'Match Briefsip Markdown: raw HTML stays inert text');
+  assert.equal(preview('<img src="https://tracker.test">')?.assistantText, '<img src="https://tracker.test">', 'Match Minarbot Markdown: raw HTML stays inert text');
 });
 
 test('T3 rail geometry keeps 8px pitch, bounds pointer and keyboard positions', () => {

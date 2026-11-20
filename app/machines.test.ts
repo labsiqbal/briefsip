@@ -23,7 +23,7 @@ async function listen(server: Server) { await new Promise<void>(resolve => serve
 async function close(server: Server) { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
 
 test('peer transport accepts proxy host headers while owner machine routes retain the local host boundary', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-peer-host-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-peer-host-'));
   const app = await startApp({ database: join(dir, 'db.sqlite'), peerTokenIssuer: fakePeerTokenIssuer() });
   const send = (path: string, body?: unknown) => new Promise<number>((resolve, reject) => {
     const req = httpRequest(app.origin + path, { method: body === undefined ? 'GET' : 'POST', headers: { Host: 'workstation.example.test:4317', 'Content-Type': 'application/json' } }, res => { res.resume(); res.once('end', () => resolve(res.statusCode!)); });
@@ -41,7 +41,7 @@ test('peer transport accepts proxy host headers while owner machine routes retai
 });
 
 test('two real instances pair mutually, expose scoped cached agents, survive restarts, recover offline, and revoke on unpair without leaking credentials', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-machines-')), issuerA = fakePeerTokenIssuer(), issuerB = fakePeerTokenIssuer();
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-machines-')), issuerA = fakePeerTokenIssuer(), issuerB = fakePeerTokenIssuer();
   const aOptions = { database: join(dir, 'a.sqlite'), peerTokenIssuer: issuerA }, bOptions = { database: join(dir, 'b.sqlite'), peerTokenIssuer: issuerB };
   let a = await startApp(aOptions), b = await startApp(bOptions); const logs: string[] = [];
   const original = [console.log, console.warn, console.error]; console.log = console.warn = console.error = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
@@ -80,7 +80,7 @@ test('two real instances pair mutually, expose scoped cached agents, survive res
 });
 
 test('pairing uses uniform invalid-code errors, strict bodies, one-time expiry, persisted rate limits, and browser-only owner writes', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-pairing-')); let clock = Date.now(); const issuer = fakePeerTokenIssuer(), options = { database: join(dir, 'db.sqlite'), peerTokenIssuer: issuer, machines: { now: () => clock } }; let app = await startApp(options);
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-pairing-')); let clock = Date.now(); const issuer = fakePeerTokenIssuer(), options = { database: join(dir, 'db.sqlite'), peerTokenIssuer: issuer, machines: { now: () => clock } }; let app = await startApp(options);
   try {
     const remote = { id: randomUUID(), name: 'Remote', version: appVersion, origin: 'http://127.0.0.1:12345' };
     const redeem = (body: unknown, status = 400) => call(app, '/api/pairing/redeem', body, status, undefined, false);
@@ -101,7 +101,7 @@ test('pairing uses uniform invalid-code errors, strict bodies, one-time expiry, 
 });
 
 test('origins reject unsafe forms; remote pairing rejects redirects, oversized bodies, and credential reflection', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-pair-fetch-')); const issuer = fakePeerTokenIssuer(), app = await startApp({ database: join(dir, 'db.sqlite'), peerTokenIssuer: issuer }); let mode = 'redirect', targetCalls = 0;
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-pair-fetch-')); const issuer = fakePeerTokenIssuer(), app = await startApp({ database: join(dir, 'db.sqlite'), peerTokenIssuer: issuer }); let mode = 'redirect', targetCalls = 0;
   const destination = createServer((_req, res) => { targetCalls++; res.end('{}'); }), destinationAddress = await listen(destination);
   const fake = createServer((_req, res) => { res.setHeader('Content-Type', 'application/json'); if (mode === 'redirect') { res.writeHead(307, { Location: destinationAddress.origin + '/steal' }); return res.end(); } if (mode === 'large') return res.end(JSON.stringify({ value: 'x'.repeat(129 * 1024) })); if (mode === 'declared') { res.writeHead(200, { 'Content-Length': '9999999' }); return res.end('{}'); } res.end('{}'); }); const address = await listen(fake);
   try {
@@ -111,7 +111,7 @@ test('origins reject unsafe forms; remote pairing rejects redirects, oversized b
 });
 
 test('unpair removes first while remote is offline; missing wrapping key fails closed and cached agents remain readable', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-peer-recovery-')), issuerA = fakePeerTokenIssuer(), issuerB = fakePeerTokenIssuer(); const aOptions = { database: join(dir, 'a.sqlite'), peerTokenIssuer: issuerA }, bOptions = { database: join(dir, 'b.sqlite'), peerTokenIssuer: issuerB };
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-peer-recovery-')), issuerA = fakePeerTokenIssuer(), issuerB = fakePeerTokenIssuer(); const aOptions = { database: join(dir, 'a.sqlite'), peerTokenIssuer: issuerA }, bOptions = { database: join(dir, 'b.sqlite'), peerTokenIssuer: issuerB };
   const a = await startApp(aOptions), b = await startApp(bOptions);
   try {
     await pair(a, b); chmodSync(aOptions.database + '.peer-key', 0o644); await a.refreshMachines(); assert.equal((await list(a))[0].status, 'unauthorized'); chmodSync(aOptions.database + '.peer-key', 0o600);
@@ -120,7 +120,7 @@ test('unpair removes first while remote is offline; missing wrapping key fails c
 });
 
 test('background health records a different peer version as online and never sends bearer to a changed identity or redirected descriptor', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-peer-health-')), issuer = fakePeerTokenIssuer(); const app = await startApp({ database: join(dir, 'db.sqlite'), peerTokenIssuer: issuer, machines: { healthIntervalMs: 50 } });
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-peer-health-')), issuer = fakePeerTokenIssuer(); const app = await startApp({ database: join(dir, 'db.sqlite'), peerTokenIssuer: issuer, machines: { healthIntervalMs: 50 } });
   const version = (await environment(app)).version, id = randomUUID(), remoteToken = 'remote-peer-canary-1234567890123456', agent = { id: randomUUID(), name: 'Remote agent', role: 'Personal agent', model: 'fixture', status: 'idle' }; let mode = 'normal', origin = '', authorizedCalls = 0, issuedBack = '';
   const server = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
@@ -153,7 +153,7 @@ test('background health records a different peer version as online and never sen
 });
 
 test('lost reciprocal acknowledgement retries encrypted pending credentials after restart without minting another token', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-peer-retry-')), issuer = fakePeerTokenIssuer(), options = { database: join(dir, 'db.sqlite'), peerTokenIssuer: issuer };
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-peer-retry-')), issuer = fakePeerTokenIssuer(), options = { database: join(dir, 'db.sqlite'), peerTokenIssuer: issuer };
   let app = await startApp(options), origin = '', attempts = 0, saved = '';
   const peerId = randomUUID(), token = 'retry-peer-canary-12345678901234567890';
   const server = createServer(async (req, res) => {
@@ -174,16 +174,16 @@ test('lost reciprocal acknowledgement retries encrypted pending credentials afte
   } finally { await app.close().catch(() => {}); await close(server); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('default wiring issues pairing tokens from the Briefsip MCP token registry and revokes them on unpair', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-machines-mcp-'));
+test('default wiring issues pairing tokens from the Minarbot MCP token registry and revokes them on unpair', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-machines-mcp-'));
   const a = await startApp({ database: join(dir, 'a.sqlite') }), b = await startApp({ database: join(dir, 'b.sqlite') });
   try {
     await call(b, '/api/environment', { ...command(), name: 'Machine B' }); await call(a, '/api/environment', { ...command(), name: 'Machine A' });
     await call(b, '/api/agents', { runtime: 'api', id: randomUUID(), name: 'Beta', role: 'Personal agent', model: 'fixture', instructions: 'Help.' }, 201);
     const { result } = await pair(a, b); assert.equal(result.pairingState, 'paired'); assert.equal(result.status, 'online'); assert.equal(result.agents[0].name, 'Beta'); assert.equal(result.agents[0].role, 'Personal agent');
-    const tokensOnB = (await call(b, '/api/mcp-server/peer-tokens')).items; assert.equal(tokensOnB.length, 1); assert.equal(tokensOnB[0].name, 'Briefsip: Machine A'); assert.equal(tokensOnB[0].revoked, null);
+    const tokensOnB = (await call(b, '/api/mcp-server/peer-tokens')).items; assert.equal(tokensOnB.length, 1); assert.equal(tokensOnB[0].name, 'Minarbot: Machine A'); assert.equal(tokensOnB[0].revoked, null);
     assert.deepEqual([...tokensOnB[0].scopes].sort(), ['agents:message', 'agents:read', 'history:read']);
-    assert.equal((await call(a, '/api/mcp-server/peer-tokens')).items[0].name, 'Briefsip: Machine B');
+    assert.equal((await call(a, '/api/mcp-server/peer-tokens')).items[0].name, 'Minarbot: Machine B');
     await call(a, '/api/machines/remove', { ...command(), environmentId: result.id });
     assert.deepEqual(await list(a), []); assert.deepEqual(await list(b), []);
     assert((await call(b, '/api/mcp-server/peer-tokens')).items[0].revoked, 'B revoked the token it issued to A');

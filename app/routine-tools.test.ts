@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { startApp } from './test-bridge.ts';
 
 test('routine tools recover from invalid arguments, preserve owner scope and keep runtime faults fatal', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-routine-tools-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-routine-tools-'));
   let mode = 'list', owned = '', foreign = '', lastResult: any;
   let badAfter: unknown = '';
   const provider = createServer(async (req, res) => {

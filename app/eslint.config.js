@@ -80,7 +80,7 @@ const foundation = [
   {
     files: ['**/*.{ts,tsx,mjs,js}'],
     languageOptions: { parser: tseslint.parser },
-    plugins: { briefsip: { rules: { 'client-server-boundary': clientServerBoundary, comments } } },
+    plugins: { minarbot: { rules: { 'client-server-boundary': clientServerBoundary, comments } } },
     rules: { 'no-debugger': 'error', 'no-unreachable': 'error' },
   },
   {
@@ -102,14 +102,14 @@ const foundation = [
   {
     files: ['**/*.{ts,tsx,mjs,js}'],
     ignores: ['**/*.test.{ts,tsx,mjs,js}', 'test.ts', 'lint/check.mjs', '**/generated/**', '**/*.generated.{ts,tsx,mjs,js}'],
-    rules: { 'briefsip/comments': 'error' },
+    rules: { 'minarbot/comments': 'error' },
   },
   {
     files: ['src/**/*.{ts,tsx,mjs,js}', ...browserSafeModules],
     plugins: { '@typescript-eslint': tseslint.plugin },
     rules: {
       '@typescript-eslint/no-restricted-imports': ['error', { patterns: [{ regex: builtinPattern, allowTypeImports: true, message: nodeMessage }] }],
-      'briefsip/client-server-boundary': 'error',
+      'minarbot/client-server-boundary': 'error',
     },
   },
 ];
@@ -162,8 +162,8 @@ export const lifecycleRatchets = [
   },
   {
     files: ['src/**/*.{ts,tsx,mjs,js}'], ignores: ['src/hooks/**', ...effectPrimitives],
-    plugins: { 'briefsip-lifecycle': { rules: { 'no-component-effects': noComponentEffects } } },
-    rules: { 'briefsip-lifecycle/no-component-effects': 'error' },
+    plugins: { 'minarbot-lifecycle': { rules: { 'no-component-effects': noComponentEffects } } },
+    rules: { 'minarbot-lifecycle/no-component-effects': 'error' },
   },
 ];
 

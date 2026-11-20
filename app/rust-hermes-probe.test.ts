@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 
 test('Rust Hermes probes can read the host install without changing it', { timeout: 45000 }, async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-rust-hermes-probe-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-rust-hermes-probe-'));
   const home = join(directory, 'home');
   const install = join(home, '.hermes', 'installs', 'fixture');
   const generation = join(install, 'environments', 'fixture');

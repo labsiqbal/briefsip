@@ -30,7 +30,7 @@ function fixtureDatabase(path: string) {
 }
 
 async function workspaceSnapshot(db: DatabaseSync, owner?: string) {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-canonical-snapshot-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-canonical-snapshot-'));
   const file = join(directory, 'snapshot.sqlite');
   const cleanup = () => rmSync(directory, { recursive: true, force: true });
   try {
@@ -38,10 +38,10 @@ async function workspaceSnapshot(db: DatabaseSync, owner?: string) {
     chmodSync(file, 0o600);
     const snapshot = testDatabase(file);
     try {
-      snapshot.exec(`CREATE TABLE briefsip_backup(format TEXT NOT NULL,version INTEGER NOT NULL,created TEXT NOT NULL) STRICT;
-        CREATE TABLE briefsip_backup_authority(generation TEXT NOT NULL,owner_account TEXT REFERENCES accounts(id)) STRICT;`);
-      snapshot.prepare("INSERT INTO briefsip_backup VALUES ('briefsip-canonical-v6',6,?)").run(new Date().toISOString());
-      snapshot.prepare('INSERT INTO briefsip_backup_authority SELECT generation,coalesce(?,(SELECT min(account) FROM projects HAVING count(DISTINCT account)=1)) FROM authority_state WHERE id=1').run(owner ?? null);
+      snapshot.exec(`CREATE TABLE minarbot_backup(format TEXT NOT NULL,version INTEGER NOT NULL,created TEXT NOT NULL) STRICT;
+        CREATE TABLE minarbot_backup_authority(generation TEXT NOT NULL,owner_account TEXT REFERENCES accounts(id)) STRICT;`);
+      snapshot.prepare("INSERT INTO minarbot_backup VALUES ('minarbot-canonical-v6',6,?)").run(new Date().toISOString());
+      snapshot.prepare('INSERT INTO minarbot_backup_authority SELECT generation,coalesce(?,(SELECT min(account) FROM projects HAVING count(DISTINCT account)=1)) FROM authority_state WHERE id=1').run(owner ?? null);
     } finally { snapshot.close(); }
     return { file, cleanup };
   } catch (error) { cleanup(); throw error; }
@@ -424,11 +424,11 @@ test('canonical questions survive lost RPC and answer replies, restart and home 
   } finally {globalThis.fetch=originalFetch;if(!closed)await runtime.close();await f.close();}
 });
 async function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-device-http-')), keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-device-http-')), keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const auth = { jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), secretKey: 'sk_test_fixture', publishableKey: `pk_test_${Buffer.from('fixture.clerk.accounts.dev$').toString('base64')}`, issuer: 'https://fixture.clerk.accounts.dev', origin: 'http://127.0.0.1', development: true };
   const clerk = createClerkClient({ secretKey: auth.secretKey, publishableKey: auth.publishableKey, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), telemetry: { disabled: true } });
   const syncSecret = randomBytes(32), webhookKeys = memoryKeys(), webhookFault = { read: false, write: false, reads: [] as { service: string; name: string }[] };
-  const service = `briefsip/server/${randomUUID()}/routine-webhooks`;
+  const service = `minarbot/server/${randomUUID()}/routine-webhooks`;
   const routineWebhookKeys = {
     read(secretRef?: string) {
       const name = secretRef ?? 'routine-webhook/missing-target';
@@ -465,7 +465,7 @@ async function fixture() {
   };
   return { dir, jwt, send, device, webhookKeys, webhookFault, stderr: () => rustServerOutput(app.origin).stderr, stdout: () => rustServerOutput(app.origin).stdout, origin: () => app.origin, startAgain: (database=options.database,port=0) => startCanonicalApp({...options,database,port}), async restart() { const ready = ((await send('/api/devices')).body.data ?? []).filter((device:any)=>device.status==='ready').map((device:any)=>device.id); const port = new URL(app.origin).port; await app.close(); app = await startCanonicalApp({ ...options, port: Number(port) }); if(ready.length)await until(async()=>{const devices=(await send('/api/devices')).body.data;return ready.every((id:string)=>devices.some((device:any)=>device.id===id&&device.status==='ready'));},deviceReconnectTimeout); }, async restoreFrom(backup:string){
     const port=Number(new URL(app.origin).port);await app.close();renameSync(options.database,options.database+'.unavailable');
-    const binary = rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
+    const binary = rustBinary('minarbot-server', process.env.MINARBOT_RUST_BINARY);
     const gate = JSON.parse(execFileSync(binary, ['--restore-read-only', backup, options.database], { encoding: 'utf8' }));
     app = await startCanonicalApp({ ...options, port });
     const reconciled = await send('/api/restore/reconcile', { requestId: randomUUID(), bootstrap: gate.bootstrap });
@@ -1495,7 +1495,7 @@ test('canonical routine configuration and flow stay scoped across projects resta
     assert.equal(created.body.data.homeDeviceId,f.home.id);assert.equal(created.body.data.projectId,f.project);
     assert.equal((await f.send(detail)).body.data.prompt,command.prompt);
     const calendar=await fetch(f.origin()+`/api/projects/${f.project}/agents/${f.agent}/routines/calendar.ics`,{headers:{Authorization:`Bearer ${f.jwt()}`,Origin:f.origin(),Connection:'close','Content-Type':'application/json','X-Briefsip-Protocol':'1','X-Briefsip-Request-Id':randomUUID()}});
-    const calendarText=await calendar.text();assert.equal(calendar.status,200);assert(calendarText.includes(`UID:${routine}@briefsip.local`));assert(calendarText.includes('RRULE:FREQ=SECONDLY;INTERVAL=300'));assert(!calendarText.includes(command.prompt));
+    const calendarText=await calendar.text();assert.equal(calendar.status,200);assert(calendarText.includes(`UID:${routine}@minarbot.local`));assert(calendarText.includes('RRULE:FREQ=SECONDLY;INTERVAL=300'));assert(!calendarText.includes(command.prompt));
     const foreignCalendar=await f.send(`/api/projects/${f.other}/agents/${f.agent}/routines/calendar.ics`);assert.equal(foreignCalendar.status,404);
     assert.deepEqual((await f.send(list,command)).body.receipt,created.body.receipt);
     assert.equal((await f.send(list,{...command,name:'Other'})).status,409);
@@ -1861,7 +1861,7 @@ test('canonical routine wall-clock HTTP keeps exact retries and pending identiti
     assert.equal(pendingCron.id, createHash('sha256').update(JSON.stringify([cron, 1, f.home.zone_revision, pendingCron.dueAt, 0])).digest('base64url'));
     const response = await fetch(f.origin() + list + '/calendar.ics', { headers: { Authorization: `Bearer ${f.jwt()}`, Origin: f.origin(), Connection: 'close', 'Content-Type': 'application/json', 'X-Briefsip-Protocol': '1', 'X-Briefsip-Request-Id': randomUUID() } });
     const calendar = (await response.text()).replace(/\r\n /g, ''); assert.equal(response.status, 200);
-    assert(calendar.includes(`UID:${once}@briefsip.local`)); assert(!calendar.includes(`UID:${cron}@briefsip.local`));
+    assert(calendar.includes(`UID:${once}@minarbot.local`)); assert(!calendar.includes(`UID:${cron}@minarbot.local`));
     assert(calendar.includes('Omitted cron routine "Daily cron"')); assert(!calendar.includes(command.prompt));
     const snapshot = (await f.send('/api/sync?projectId=' + f.project)).body.data;
     const observed = snapshot.page.events.filter((event: any) => event.recordKind.startsWith('routine'));
@@ -1905,7 +1905,7 @@ test('canonical routine calendar exports only current project and reader schedul
     db.prepare("UPDATE record_scopes SET project=? WHERE table_name='routines' AND key_json=?").run(f.other,JSON.stringify([entries.foreign]));
     const owned=await calendar();assert.equal(owned.res.status,200);assert.equal(owned.res.headers.get('content-type'),'text/calendar; charset=utf-8');
     assert.equal(owned.res.headers.get('x-briefsip-protocol'),'1');assert.equal(owned.res.headers.get('cache-control'),'no-store');
-    assert(owned.text.includes(`UID:${entries.shared}@briefsip.local`));assert(owned.text.includes(`UID:${entries.private}@briefsip.local`));
+    assert(owned.text.includes(`UID:${entries.shared}@minarbot.local`));assert(owned.text.includes(`UID:${entries.private}@minarbot.local`));
     for(const name of ['disabled','webhook','foreign'])assert(!owned.text.includes(entries[name]),name);
     assert(!owned.text.includes('CALENDAR_PRIVATE_PROMPT'));assert(owned.text.includes('DTSTART:20270101T090000Z'));assert(owned.text.includes('RRULE:FREQ=SECONDLY;INTERVAL=300'));
     assert.equal((await calendar('user_collaborator')).res.status,404);
@@ -3142,7 +3142,7 @@ test('SIGKILL recovery proves no send before marker and never repeats marked eff
 });
 
 test('Rust exports prepared, in-flight and reported Node v3 journal evidence offline', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-frozen-journal-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-frozen-journal-'));
   const source = new URL('./test-support/fixtures/node-device-journal-v3/', import.meta.url);
   try {
     const { identity, keyring: syntheticKeys, samples } = JSON.parse(readFileSync(new URL('synthetic.json', source), 'utf8'));

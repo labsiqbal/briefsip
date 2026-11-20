@@ -19,7 +19,7 @@ test('routine flow graph rejects cycles, foreign agents and disconnected branche
 });
 
 test('routine flow fan-in waits for every input and settles all-failed branches', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-flow-fan-in-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-flow-fan-in-'));
   let releaseRoot!: () => void, releaseBranch!: () => void;
   const rootGate = new Promise<void>(resolve => { releaseRoot = resolve; });
   const branchGate = new Promise<void>(resolve => { releaseBranch = resolve; });

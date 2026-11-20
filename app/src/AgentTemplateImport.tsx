@@ -1,12 +1,13 @@
+import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { downloadBlob } from './hooks/downloadBlob';
 import { useEffect, useRef, useState } from 'react';
 import { parseAgentTemplate, restoreTemplateImport, templateCommand, type AgentTemplate } from '../shared/agent-template';
 import { Alert, Button, Card, CodeBlock, Field, Input, Section, Textarea, useConfirm, RecoveryAlert } from './ui/kit';
 
 type Agent = { id: string; name: string; role: string; model: string; instructions: string; thread_limit: number; revision: number };
-const storage = 'briefsip:agent-template-import';
+const storage = 'minarbot:agent-template-import';
 export function AgentTemplateImport({ request, onCreated }: { request: <T>(path: string, data?: unknown) => Promise<T>; onCreated: (agent: Agent) => void; onClose: () => void }) {
-  const [recovery] = useState(() => { try { return { pending: restoreTemplateImport(sessionStorage.getItem(storage)), invalid: false }; } catch { return { pending: null, invalid: true }; } });
+  const [recovery] = useState(() => { try { return { pending: restoreTemplateImport(readProductStorage(sessionStorage, storage)), invalid: false }; } catch { return { pending: null, invalid: true }; } });
   const [pending, setPending] = useState(recovery.pending), [invalid, setInvalid] = useState(recovery.invalid);
   const [draft, setDraft] = useState<AgentTemplate | null>(recovery.pending?.template ?? null);
   const [error, setError] = useState(''), [busy, setBusy] = useState(false);
@@ -33,14 +34,14 @@ export function AgentTemplateImport({ request, onCreated }: { request: <T>(path:
       const agent = await request<Agent>('/api/agents', templateCommand(command.template, command.id));
       if (current !== generation.current) return;
       // Remove only this command; preserve any newer recovery data.
-      if (sessionStorage.getItem(storage) === JSON.stringify(command)) sessionStorage.removeItem(storage);
+      if (readProductStorage(sessionStorage, storage) === JSON.stringify(command)) removeProductStorage(sessionStorage, storage);
       onCreated(agent);
     } catch (error) { if (current === generation.current) setError(error instanceof Error ? error.message : 'Import is not confirmed yet. Try again.'); }
     finally { inFlight.current = false; if (current === generation.current) setBusy(false); }
   }
   async function discard() {
     if (inFlight.current || busy || !await confirm({ title: 'Ignore import recovery?', description: 'The agent may already have been created. Check the agent list before importing again.', confirm: 'Ignore', danger: true })) return;
-    try { sessionStorage.removeItem(storage); setPending(null); setDraft(null); setInvalid(false); setError(''); }
+    try { removeProductStorage(sessionStorage, storage); setPending(null); setDraft(null); setInvalid(false); setError(''); }
     catch { setError('Browser storage could not be updated. Try again.'); }
   }
   return <div className="k-page bs-root">
@@ -83,7 +84,7 @@ export function AgentTemplateExport({ id, request }: { id: string; request: <T>(
     <div className="k-row-actions"><Button size="sm" disabled={busy} onClick={() => void preview()}>{busy ? 'Loading saved profile...' : 'Preview export template'}</Button></div>
     {error && <Alert tone="error">{error}</Alert>}
     {template && <>{template.avatar && <img src={`data:image/png;base64,${template.avatar}`} alt="Template avatar" width={64} height={64} style={{ borderRadius: 12, objectFit: 'cover' }} />}<CodeBlock label="File contents to download">{JSON.stringify(template, null, 2)}</CodeBlock><div className="k-row-actions"><Button size="sm" variant="secondary" onClick={() => {
-      downloadBlob(new Blob([JSON.stringify(template, null, 2) + '\n'], { type: 'application/json' }), 'briefsip-agent-template.json');
+      downloadBlob(new Blob([JSON.stringify(template, null, 2) + '\n'], { type: 'application/json' }), 'minarbot-agent-template.json');
     }}>Download reviewed template</Button></div></>}
   </Section></div>;
 }

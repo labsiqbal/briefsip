@@ -24,7 +24,7 @@ try {
   assert(iris, 'Seed Iris, Theo, Mara, Coder and a long Iris chat with the R5 fixture');
   if (!before) {
     const popout = await browser.newPage(); await popout.goto(origin + '/?computer=' + iris.id);
-    await popout.waitForFunction(() => document.title === 'Computer · Iris - Briefsip'); await popout.close();
+    await popout.waitForFunction(() => document.title === 'Computer · Iris - Minarbot'); await popout.close();
   }
   await page.goto(origin + `/agents/${iris.id}`);
   const box = () => page.getByRole('textbox', { name: 'Message Iris', exact: true });
@@ -66,7 +66,7 @@ try {
     await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Conversation name');
     await page.keyboard.type('Keyboard renamed'); await page.keyboard.press('Enter');
     await details.locator(`[data-conversation-id="${thread.id}"]`).getByRole('button', { name: 'Keyboard renamed', exact: true }).waitFor();
-    await page.waitForFunction(() => document.title === 'Keyboard renamed · Iris - Briefsip');
+    await page.waitForFunction(() => document.title === 'Keyboard renamed · Iris - Minarbot');
     check(await api(`/api/threads/${thread.id}`).then(row => row.name === 'Keyboard renamed'), 'Keyboard rename saved');
     await page.locator('.chat__pill').click(); await page.getByRole('menuitem', { name: 'Rename', exact: true }).click();
     await page.getByRole('textbox', { name: 'Conversation name', exact: true }).fill('Header renamed');
@@ -119,7 +119,7 @@ try {
   await shot('14-settings-700');
   results.settingsNavWidth = await page.locator('.app-settings__nav').evaluate(el => el.getBoundingClientRect().width);
   check(results.settingsNavWidth < 100, 'Settings nav collapses below 768px');
-  check(before || await page.title() === 'Settings · Appearance - Briefsip', 'Settings route title');
+  check(before || await page.title() === 'Settings · Appearance - Minarbot', 'Settings route title');
   if (!before) {
     const rows = await page.locator('.app-settings__page--preferences .k-row').evaluateAll(rows => rows.map(el => ({ label: el.querySelector('.k-row__main').getBoundingClientRect().bottom, controls: el.querySelector('.k-row__trailing').getBoundingClientRect().top })));
     check(rows.every(row => row.controls >= row.label), 'Appearance rows stack consistently');
@@ -131,12 +131,12 @@ try {
     const saved = (await api('/api/projects')).projects.find(p => p.id === project.id), room = saved.sections[0];
     await page.goto(origin + `/projects/${project.id}`);
     await page.getByRole('heading', { name: projectName, exact: true }).waitFor();
-    check(await page.title() === projectName + ' - Briefsip', 'Project title');
+    check(await page.title() === projectName + ' - Minarbot', 'Project title');
     check(await page.locator('.project-home .k-row__leading:has(.bs-avatar)').evaluateAll(els => els.length === 3 && els.every(el => getComputedStyle(el).borderRadius === '50%')), 'Project avatars circular');
     await shot('13-project-avatars');
     await page.getByRole('button', { name: '# general in ' + projectName, exact: true }).click();
     await page.getByRole('textbox', { name: 'Message #general', exact: true }).waitFor();
-    check(await page.title() === '#general · ' + projectName + ' - Briefsip', 'Room title');
+    check(await page.title() === '#general · ' + projectName + ' - Minarbot', 'Room title');
     await page.getByRole('tab', { name: /^Agents/ }).first().click();
     await page.getByRole('button', { name: /^Theo/ }).first().click();
     await page.getByRole('textbox', { name: 'Message Theo', exact: true }).waitFor();

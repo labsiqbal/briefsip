@@ -1,10 +1,11 @@
+import { productEnv } from '../desktop/src/rename-env.mjs';
 import { spawn } from 'node:child_process';
 import { rustBinary } from './rust-binary.ts';
 
 export async function runRustConnector(platform: 'slack' | 'telegram', options: object, signal: AbortSignal) {
-  const binary = rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
+  const binary = rustBinary('minarbot-server', productEnv('MINARBOT_RUST_BINARY'));
   if (signal.aborted) return;
-  const child = spawn(binary, ['--connector-config'], { stdio: ['pipe', 'ignore', 'pipe'], env: { ...process.env, BRIEFSIP_TEST_SERVER: 'rust' } });
+  const child = spawn(binary, ['--connector-config'], { stdio: ['pipe', 'ignore', 'pipe'], env: { ...process.env, MINARBOT_TEST_SERVER: 'rust' } });
   let stderr = '';
   child.stderr.setEncoding('utf8'); child.stderr.on('data', value => { stderr = (stderr + value).slice(-2048); });
   child.stdin.on('error', () => {}); child.stdin.end(JSON.stringify({ platform, ...options }));
@@ -18,7 +19,7 @@ export async function runRustConnector(platform: 'slack' | 'telegram', options: 
   } finally { signal.removeEventListener('abort', stop); }
 }
 export async function runRustConnectorJournal(command: object) {
-  const child = spawn(rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY), ['--connector-journal-config'], { stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, BRIEFSIP_TEST_SERVER: 'rust' } });
+  const child = spawn(rustBinary('minarbot-server', productEnv('MINARBOT_RUST_BINARY')), ['--connector-journal-config'], { stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, MINARBOT_TEST_SERVER: 'rust' } });
   let stdout = '', stderr = '';
   child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
   child.stdout.on('data', value => { stdout += value; }); child.stderr.on('data', value => { stderr += value; });

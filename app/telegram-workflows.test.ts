@@ -17,7 +17,7 @@ function approvalClick(sequence: number, notice: string, message: number, accept
 }
 
 test('Telegram retains early button clicks until multipart delivery is confirmed', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'briefsip-telegram-early-')), agent = randomUUID(), notice = randomUUID(), run = randomUUID();
+  const root = mkdtempSync(join(tmpdir(), 'minarbot-telegram-early-')), agent = randomUUID(), notice = randomUUID(), run = randomUUID();
   let release!: () => void;
   const responseGate = new Promise<void>(resolve => release = resolve);
   let part = 0, visible = false;
@@ -107,7 +107,7 @@ async function workflowFixture(root: string) {
 }
 
 test('Telegram inline approvals validate message ownership and persist the first decision before acknowledgement', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'briefsip-telegram-buttons-'));
+  const root = mkdtempSync(join(tmpdir(), 'minarbot-telegram-buttons-'));
   const f = await workflowFixture(root);
   const { connector, db, ui } = f;
   try {
@@ -162,7 +162,7 @@ test('Telegram inline approvals validate message ownership and persist the first
 });
 
 test('Telegram workflow approval binds requester and recovers lost run and decision responses', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'briefsip-telegram-flow-'));
+  const root = mkdtempSync(join(tmpdir(), 'minarbot-telegram-flow-'));
   const f = await workflowFixture(root);
   const { connector, workflow, ui } = f;
   try {

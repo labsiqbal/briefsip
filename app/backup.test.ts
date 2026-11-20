@@ -14,7 +14,7 @@ import { initializeCanonicalSchema } from './test-support/legacy-schema.ts';
 import { canonicalHttp } from './test-support/canonical-http.ts';
 
 test('canonical server guard fences aliases and processes, releases on SIGKILL and rejects unsafe files', async () => {
-  const dir=mkdtempSync(join(tmpdir(),'briefsip-server-lock-')),database=join(dir,'canonical.sqlite'),guardPath=database+'.server-lock.sqlite';
+  const dir=mkdtempSync(join(tmpdir(),'minarbot-server-lock-')),database=join(dir,'canonical.sqlite'),guardPath=database+'.server-lock.sqlite';
   const source = testDatabase(database);
   initializeCanonicalSchema(source);
   source.exec("UPDATE authority_state SET serving_state='read_only_recovery'");
@@ -22,9 +22,9 @@ test('canonical server guard fences aliases and processes, releases on SIGKILL a
   chmodSync(database, 0o600);
   const auth = { origin: 'http://127.0.0.1', development: true, issuer: 'https://fixture.example', secretKey: 'fixture-secret', publishableKey: 'fixture-key' };
   const fence = () => checkedRestore(['fence-request', '--db', database, '--session', join(dir, 'missing.json')]);
-  const binary = rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
+  const binary = rustBinary('minarbot-server', process.env.MINARBOT_RUST_BINARY);
   const probe = (path: string) => spawnSync(binary, ['--test-config'], {
-    env: { ...process.env, BRIEFSIP_TEST_SERVER: 'rust' },
+    env: { ...process.env, MINARBOT_TEST_SERVER: 'rust' },
     input: JSON.stringify({ database: path, port: 0, auth }), encoding: 'utf8', timeout: 3000,
   });
   const app = await startCanonicalApp({ database, auth });
@@ -55,7 +55,7 @@ test('canonical server guard fences aliases and processes, releases on SIGKILL a
 });
 
 test('v4 backup retains sync floors, monotonic heads, tombstones and receipts while restored authority stays fenced', async () => {
-  const f = canonicalHttp('briefsip-sync-backup-');
+  const f = canonicalHttp('minarbot-sync-backup-');
   const { db, dir, owner } = f;
   const now = Date.now(), project = randomUUID();
   let backup: Awaited<ReturnType<typeof workspaceSnapshot>> | undefined;
@@ -92,7 +92,7 @@ test('v4 backup retains sync floors, monotonic heads, tombstones and receipts wh
 });
 
 test('live backup restores history while holding pending work and disabling automation', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-backup-test-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-backup-test-'));
   let accepted!: () => void, calls = 0;
   const receipt = new Promise<void>(resolve => { accepted = resolve; });
   const provider = createServer(async req => { for await (const _chunk of req) {} calls++; accepted(); });
@@ -146,7 +146,7 @@ test('live backup restores history while holding pending work and disabling auto
     const symlink = join(dir, 'symlink.sqlite'); symlinkSync(destination, symlink); assert.throws(() => restoreWorkspace(file, symlink), /new database/);
     const dangling = join(dir, 'dangling.sqlite'); symlinkSync(join(dir, 'missing'), dangling + '-wal');
     assert.throws(() => restoreWorkspace(file, dangling), /new database/);
-    const unknown = join(dir, 'unknown.sqlite'), unknownDb = testDatabase(unknown); unknownDb.exec("CREATE TABLE briefsip_backup(format TEXT,version INTEGER); INSERT INTO briefsip_backup VALUES ('briefsip-workspace',99)"); unknownDb.close();
+    const unknown = join(dir, 'unknown.sqlite'), unknownDb = testDatabase(unknown); unknownDb.exec("CREATE TABLE minarbot_backup(format TEXT,version INTEGER); INSERT INTO minarbot_backup VALUES ('minarbot-workspace',99)"); unknownDb.close();
     assert.throws(() => restoreWorkspace(unknown, join(dir, 'unknown-target.sqlite')), /backup format/);
     const corrupt = join(dir, 'corrupt'); writeFileSync(corrupt, 'not sqlite'); assert.throws(() => restoreWorkspace(corrupt, join(dir, 'invalid.sqlite')));
   } finally { await restored?.close(); await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }

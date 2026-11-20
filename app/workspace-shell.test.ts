@@ -9,7 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { startApp } from './test-bridge.ts';
 
 async function shellFixture(t: TestContext) {
-  const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-shell-')), workspace = join(root, 'workspace');
+  const root = mkdtempSync(join(tmpdir(), 'minarbot-rust-shell-')), workspace = join(root, 'workspace');
   mkdirSync(workspace);
   const args = new Map<string, Record<string, unknown>>();
   const results = new Map<string, unknown>();
@@ -42,7 +42,7 @@ async function shellFixture(t: TestContext) {
     baseURL: `http://127.0.0.1:${address.port}/v1`,
     workspaces: [{ agent: writable, directory: workspace, write: true }, { agent: readonly, directory: workspace }],
   });
-  const envName = 'BRIEFSIP_SHELL_TEST_CANARY', original = process.env[envName];
+  const envName = 'MINARBOT_SHELL_TEST_CANARY', original = process.env[envName];
   try {
     process.env[envName] = 'shell-secret-fixture';
     app = await start();

@@ -1,3 +1,4 @@
+import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { readClipboardText } from './ui/clipboard';
 import { MessageCopyButton } from './ui/MessageCopyButton';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -19,7 +20,7 @@ const screenErrorText: Record<ScreenError, string> = {
   stopped: 'Desktop stopped.',
 };
 export function useComputerControl(agent: string, request: ComputerRequest, suspended = false) {
-  const key = `briefsip-computer-control:${agent}`;
+  const key = `minarbot-computer-control:${agent}`;
   const [status, setStatus] = useState<ComputerStatus | null>(null), [error, setError] = useState('');
   const [pending, setPending] = useState<ControlCommand | null>(null), [busy, setBusy] = useState(false), [invalid, setInvalid] = useState(false);
   const statusReads = useRef(0);
@@ -28,7 +29,7 @@ export function useComputerControl(agent: string, request: ComputerRequest, susp
   useEffect(() => {
     mounted.current = true;
     try {
-      const saved = JSON.parse(sessionStorage.getItem(key) ?? 'null');
+      const saved = JSON.parse(readProductStorage(sessionStorage, key) ?? 'null');
       if (saved) {
         if (typeof saved !== 'object' || Object.keys(saved).some(k => !['id','revision','operation','turn'].includes(k)) || typeof saved.id !== 'string' || !/^[a-f0-9-]{36}$/i.test(saved.id) || !Number.isSafeInteger(saved.revision) || saved.revision < 0 || !['take','hand-back','dismiss'].includes(saved.operation) || saved.operation === 'dismiss' && typeof saved.turn !== 'string') throw new Error();
         setPending(saved);
@@ -55,7 +56,7 @@ export function useComputerControl(agent: string, request: ComputerRequest, susp
     flight.current = true; setBusy(true); setPending(command); setError('');
     try {
       const value = await request<ComputerStatus>(`/api/agents/${agent}/computer/control`, command);
-      sessionStorage.removeItem(key);
+      removeProductStorage(sessionStorage, key);
       if (mounted.current) { updateStatus(value); setPending(null); }
     } catch (error) { if (mounted.current) setError(error instanceof Error ? error.message : 'Control change is not confirmed. Retry the saved request.'); }
     finally { flight.current = false; if (mounted.current) setBusy(false); }
@@ -64,7 +65,7 @@ export function useComputerControl(agent: string, request: ComputerRequest, susp
     if (!await confirm({ title: 'Load current control?', description: 'Accepted changes still apply. Check current control before taking another action.', confirm: 'Load current control' })) return;
     try {
       const value = await request<ComputerStatus>(`/api/agents/${agent}/computer`);
-      sessionStorage.removeItem(key); updateStatus(value); setPending(null); setInvalid(false); setError('');
+      removeProductStorage(sessionStorage, key); updateStatus(value); setPending(null); setInvalid(false); setError('');
     } catch (error) { setError(error instanceof Error ? error.message : 'Computer status unavailable.'); }
   }
   const recovery = <>
@@ -122,7 +123,7 @@ export function ComputerViewer({ agent, name, request, popout = false, onClose, 
     void request<{ ticket: string }>(`/api/agents/${agent}/computer/vnc-ticket`, { mode: user ? 'control' : 'watch', revision: status?.control.revision }).then(({ ticket }) => {
       if (stopped) return;
       const url = new URL(`/api/agents/${agent}/computer/vnc`, location.href); url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'; url.searchParams.set('ticket', ticket);
-      const channel = new WebSocket(url, ['briefsip-vnc-v1', 'binary']);
+      const channel = new WebSocket(url, ['minarbot-vnc-v1', 'binary']);
       socket = channel;
       channel.binaryType = 'arraybuffer';
       channel.addEventListener('close', event => {
@@ -152,7 +153,7 @@ export function ComputerViewer({ agent, name, request, popout = false, onClose, 
           rfb.current = client;
         };
         // The 16 KiB sample takes about 130 ms at 1 Mbps on the viewer socket.
-        if (channel.protocol === 'briefsip-vnc-v1') channel.addEventListener('message', () => attach(performance.now() - opened > 130), { once: true });
+        if (channel.protocol === 'minarbot-vnc-v1') channel.addEventListener('message', () => attach(performance.now() - opened > 130), { once: true });
         else attach(false);
       }, { once: true });
     }).catch(error => {

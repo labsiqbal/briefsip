@@ -9,7 +9,7 @@ import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 
 async function fixture(t: { after: (fn: () => Promise<void>) => void }, hub = false) {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-delete-')), database = join(dir, 'state.sqlite');
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-delete-')), database = join(dir, 'state.sqlite');
   const options = { database, ...(hub ? {hubLink: {origin:'https://hub.example.test',hubSigningPublicKey:generateKeyPairSync('ed25519').publicKey.export({type:'spki',format:'der'}).toString('base64url')}} : {}) };
   let app = await startApp(options);
   t.after(async () => { await app.close(); rmSync(dir, { recursive: true, force: true }); });
@@ -57,7 +57,7 @@ test('delete cascades every agent FK, scoped data, workflows, desktop and journa
     for (const agent of [a.id,b.id]) db.prepare("INSERT INTO composio_policies VALUES (?,'shared','tool','account','github')").run(agent);
     db.prepare("INSERT INTO composio_policy_projects VALUES ('shared','shared-project')").run();
     db.prepare('INSERT INTO queue_positions VALUES (?,1)').run(direct);
-    db.prepare("INSERT INTO workspace_checkpoints VALUES (?,?,'/synthetic','refs/briefsip/checkpoints/synthetic','hash','pruned',0)").run(direct,a.id);
+    db.prepare("INSERT INTO workspace_checkpoints VALUES (?,?,'/synthetic','refs/minarbot/checkpoints/synthetic','hash','pruned',0)").run(direct,a.id);
     db.prepare('INSERT INTO memory_commands VALUES (?,?,?)').run(randomUUID(),JSON.stringify({scope:`agents:${a.id}`,agent:a.id}),JSON.stringify({id:file}));
   });
   const command={id:randomUUID()}, path=`/api/agents/${a.id}/delete`;
@@ -139,7 +139,7 @@ test('running provider work must settle before delete; transactional failure pre
   });
   await new Promise<void>(resolve=>provider.listen(0,'127.0.0.1',resolve));
   const address=provider.address();assert(address&&typeof address!=='string');
-  const dir=mkdtempSync(join(tmpdir(),'briefsip-delete-running-')),database=join(dir,'state.sqlite');
+  const dir=mkdtempSync(join(tmpdir(),'minarbot-delete-running-')),database=join(dir,'state.sqlite');
   let app=await startApp({database,baseURL:`http://127.0.0.1:${address.port}/v1`}, { directory: dir, servers: [provider] });
   t.after(async()=>{release?.();await app.close();provider.closeAllConnections();await new Promise<void>(resolve=>provider.close(()=>resolve()));rmSync(dir,{recursive:true,force:true});});
   async function post(path:string,body:unknown,status=200){const res=await fetch(app.origin+path,{method:'POST',headers:{Origin:app.origin,'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await res.json();assert.equal(res.status,status,JSON.stringify(data));return data;}
@@ -159,7 +159,7 @@ test('running provider work must settle before delete; transactional failure pre
 
 test('paired peer cannot delete owner agents; deletion on owner refreshes peer roster', async t=>{
   const {fakePeerTokenIssuer}=await import('./test-support/peer-token-issuer.ts');
-  const dir=mkdtempSync(join(tmpdir(),'briefsip-delete-peer-')),issuer=fakePeerTokenIssuer();
+  const dir=mkdtempSync(join(tmpdir(),'minarbot-delete-peer-')),issuer=fakePeerTokenIssuer();
   const owner=await startApp({database:join(dir,'owner.sqlite'),peerTokenIssuer:issuer}),peer=await startApp({database:join(dir,'peer.sqlite'),peerTokenIssuer:fakePeerTokenIssuer()});
   t.after(async()=>{await owner.close();await peer.close();rmSync(dir,{recursive:true,force:true});});
   async function post(app:{origin:string},path:string,body:unknown,status=200,token?:string){const res=await fetch(app.origin+path,{method:'POST',headers:{Origin:app.origin,'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{})},body:JSON.stringify(body)});assert.equal(res.status,status,await res.clone().text());return res.json();}
@@ -178,7 +178,7 @@ test('owned Git checkpoint refs clean up durably without removing project files;
   const workspace=join(f.dir,'project');mkdirSync(workspace);writeFileSync(join(workspace,'keep.txt'),'Shared project');
   const git=(...args:string[])=>execFileSync('git',['-C',workspace,...args],{encoding:'utf8'}).trim();
   git('init','--quiet');git('add','.');git('-c','user.name=Fixture','-c','user.email=fixture@example.test','commit','--quiet','-m','Synthetic');
-  const hash=git('rev-parse','HEAD'),turn=randomUUID(),ref=`refs/briefsip/checkpoints/${turn}`;
+  const hash=git('rev-parse','HEAD'),turn=randomUUID(),ref=`refs/minarbot/checkpoints/${turn}`;
   git('update-ref',ref,hash);
   await f.seed(db=>{
     db.prepare("INSERT INTO turns(id,agent,text,status,created) VALUES (?,?,'done','done','fixture')").run(turn,a.id);

@@ -9,6 +9,6 @@ const subscribe = (changed: () => void) => {
 };
 export function useNarrowSidebar() {
   const narrow = useSyncExternalStore(subscribe, () => window.matchMedia(query).matches, () => false);
-  useEffect(() => { if (narrow) window.dispatchEvent(new CustomEvent('briefsip:details-open', { detail: false })); }, [narrow]);
+  useEffect(() => { if (narrow) window.dispatchEvent(new CustomEvent('minarbot:details-open', { detail: false })); }, [narrow]);
   return narrow;
 }

@@ -8,7 +8,7 @@ import { startApp } from './test-bridge.ts';
 const policy = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'self' https: http:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
 test('SPA has a fresh matching style nonce while scripts, API and assets keep strict CSP', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-csp-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-csp-'));
   const app = await startApp({ database: join(dir, 'state.sqlite') });
   try {
     const nonces: string[] = [];

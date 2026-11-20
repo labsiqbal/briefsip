@@ -14,7 +14,7 @@ function responseGate() {
 }
 
 test('a hostile MCP output schema cannot block HTTP, exceed the worker deadline or resist cancellation', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-mcp-isolation-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-mcp-isolation-'));
   let connection = '', effects = 0;
   const firstResponse = responseGate(), secondResponse = responseGate();
   const external = createServer(async (req, res) => {

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { assertTestCoverage, discoverTests } from './test.mjs';
 
 test('discovery covers nested and new tests, excludes opt-in/dependencies, and rejects omissions', () => {
-  const root = mkdtempSync(join(tmpdir(), 'briefsip-test-discovery-'));
+  const root = mkdtempSync(join(tmpdir(), 'minarbot-test-discovery-'));
   const add = (file: string) => writeFileSync(join(root, file), '');
   try {
     for (const dir of ['hub', 'scripts', 'node_modules/pkg', 'hub/node_modules/pkg']) mkdirSync(join(root, dir), { recursive: true });

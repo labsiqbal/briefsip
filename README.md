@@ -1,10 +1,10 @@
-# Briefsip
+# Minarbot
 
-Briefsip is a self-hosted workspace where you work with a team of AI agents. You chat with each agent, group agents into projects, give them tools and their own computer, and schedule work that runs while you are away. Agents can run on several of your machines and talk to each other across them.
+Minarbot is a self-hosted workspace where you work with a team of AI agents. You chat with each agent, group agents into projects, give them tools and their own computer, and schedule work that runs while you are away. Agents can run on several of your machines and talk to each other across them.
 
-Briefsip is free and open source under the [Apache License 2.0](LICENSE).
+Minarbot is free and open source under the [Apache License 2.0](LICENSE).
 
-> **Status:** early and moving fast. It runs every day on two Linux machines, but expect rough edges and breaking changes. Today it supports **Linux x86_64 only**. macOS and Windows are planned in [#13](https://github.com/labsiqbal/briefsip/issues/13).
+> **Status:** early and moving fast. It runs every day on two Linux machines, but expect rough edges and breaking changes. Today it supports **Linux x86_64 only**. macOS and Windows are planned in [#13](https://github.com/minarbot/minarbot/issues/13).
 
 ## Features
 
@@ -39,27 +39,27 @@ Briefsip is free and open source under the [Apache License 2.0](LICENSE).
 
 ## Install
 
-Briefsip runs as a local server you open in the browser. A one-line installer is planned in [#13](https://github.com/labsiqbal/briefsip/issues/13). Until then, install a release by hand.
+Minarbot runs as a local server you open in the browser. A one-line installer is planned in [#13](https://github.com/minarbot/minarbot/issues/13). Until then, install a release by hand.
 
 **Requirements:** Linux x86_64, `curl`, `tar` and `sha256sum`. To use agents, install and sign in to at least one engine (for example [Codex CLI](https://developers.openai.com/codex/cli) or [Claude Code](https://claude.com/product/claude-code)), or add a model API key in Settings after the first start.
 
 1. Download the latest release and check it against `latest.json`:
 
    ```sh
-   mkdir -p ~/briefsip-download && cd ~/briefsip-download
-   curl -fsSLO https://github.com/labsiqbal/briefsip/releases/latest/download/latest.json
+   mkdir -p ~/minarbot-download && cd ~/minarbot-download
+   curl -fsSLO https://github.com/minarbot/minarbot/releases/latest/download/latest.json
    archive=$(sed -n 's/.*"archive":"\([^"]*\)".*/\1/p' latest.json)
    id=$(sed -n 's/.*"id":"\([^"]*\)".*/\1/p' latest.json)
    sha=$(sed -n 's/.*"sha256":"\([^"]*\)".*/\1/p' latest.json)
-   curl -fsSLO "https://github.com/labsiqbal/briefsip/releases/latest/download/$archive"
+   curl -fsSLO "https://github.com/minarbot/minarbot/releases/latest/download/$archive"
    echo "$sha  $archive" | sha256sum -c -
    ```
 
 2. Unpack it and point `current` at it:
 
    ```sh
-   releases=~/.local/share/briefsip/releases
-   mkdir -p "$releases/$id" ~/.local/share/briefsip/data ~/.config/briefsip
+   releases=~/.local/share/minarbot/releases
+   mkdir -p "$releases/$id" ~/.local/share/minarbot/data ~/.config/minarbot
    tar -xzf "$archive" -C "$releases/$id"
    ln -sfn "$id" "$releases/current"
    ```
@@ -67,29 +67,29 @@ Briefsip runs as a local server you open in the browser. A one-line installer is
 3. Write the launcher configuration. The launcher only accepts private files:
 
    ```sh
-   cfg=~/.config/briefsip
+   cfg=~/.config/minarbot
    : > "$cfg/launcher.env"
    printf '{"dataDir":"%s","envFile":"%s","releasesDir":"%s","port":4317}\n' \
-     ~/.local/share/briefsip/data "$cfg/launcher.env" "$releases" > "$cfg/launcher.json"
-   chmod 700 "$cfg" ~/.local/share/briefsip/data
+     ~/.local/share/minarbot/data "$cfg/launcher.env" "$releases" > "$cfg/launcher.json"
+   chmod 700 "$cfg" ~/.local/share/minarbot/data
    chmod 600 "$cfg/launcher.json" "$cfg/launcher.env"
    ```
 
 4. Start it, then open <http://127.0.0.1:4317>:
 
    ```sh
-   "$releases/current/bin/briefsip-launcher" --config ~/.config/briefsip/launcher.json
+   "$releases/current/bin/minarbot-launcher" --config ~/.config/minarbot/launcher.json
    ```
 
-To keep it running in the background, create `~/.config/systemd/user/briefsip.service`:
+To keep it running in the background, create `~/.config/systemd/user/minarbot.service`:
 
 ```ini
 [Unit]
-Description=Briefsip
+Description=Minarbot
 After=network.target
 
 [Service]
-ExecStart=%h/.local/share/briefsip/releases/current/bin/briefsip-launcher --config %h/.config/briefsip/launcher.json
+ExecStart=%h/.local/share/minarbot/releases/current/bin/minarbot-launcher --config %h/.config/minarbot/launcher.json
 Restart=on-failure
 RestartSec=2
 
@@ -97,41 +97,41 @@ RestartSec=2
 WantedBy=default.target
 ```
 
-Then run `systemctl --user daemon-reload && systemctl --user enable --now briefsip.service`. Later updates install from inside the app.
+Then run `systemctl --user daemon-reload && systemctl --user enable --now minarbot.service`. Later updates install from inside the app.
 
-> **Security:** the local server has no login. Anyone who can reach its port can use your agents, files and provider accounts. Keep it on `127.0.0.1` or a private network such as Tailscale. Add extra origins with `BRIEFSIP_ALLOWED_ORIGINS` in `launcher.env`.
+> **Security:** the local server has no login. Anyone who can reach its port can use your agents, files and provider accounts. Keep it on `127.0.0.1` or a private network such as Tailscale. Add extra origins with `MINARBOT_ALLOWED_ORIGINS` in `launcher.env`.
 
 ### Computer (optional)
 
-Computer gives an agent its own desktop with Chrome. It is off until you set it up on the machine and turn it on for an agent. One-click setup is planned in [#11](https://github.com/labsiqbal/briefsip/issues/11). For now, on Debian, Ubuntu or Mint:
+Computer gives an agent its own desktop with Chrome. It is off until you set it up on the machine and turn it on for an agent. One-click setup is planned in [#11](https://github.com/minarbot/minarbot/issues/11). For now, on Debian, Ubuntu or Mint:
 
 ```sh
 sudo apt install tigervnc-standalone-server xfwm4 xfdesktop4 xfce4-panel xdotool scrot bubblewrap dbus
 ```
 
-Also install [Google Chrome](https://www.google.com/chrome/) so that `google-chrome` is on the `PATH`. Add `BRIEFSIP_AGENT_DESKTOP=1` to `launcher.env`, restart Briefsip, then turn on **Computer** in the agent's settings. By default two computers run at once per machine, and each stops after 15 idle minutes.
+Also install [Google Chrome](https://www.google.com/chrome/) so that `google-chrome` is on the `PATH`. Add `MINARBOT_AGENT_DESKTOP=1` to `launcher.env`, restart Minarbot, then turn on **Computer** in the agent's settings. By default two computers run at once per machine, and each stops after 15 idle minutes.
 
 ## Run from source
 
 You need Node.js 22.23.4 or later, npm, and a Rust toolchain.
 
 ```sh
-git clone https://github.com/labsiqbal/briefsip.git
-cd briefsip/app
+git clone https://github.com/minarbot/minarbot.git
+cd minarbot/app
 npm ci
 npm run build
 cd ..
-cargo run --release -p briefsip-server
+cargo run --release -p minarbot-server
 ```
 
-Open <http://127.0.0.1:4317>. Set `PORT` to use another port and `BRIEFSIP_DATA_DIR` to keep data somewhere other than `~/.local/share/briefsip/new-app`. Rebuild the UI with `npm run build` in `app/` after changing it.
+Open <http://127.0.0.1:4317>. Set `PORT` to use another port and `MINARBOT_DATA_DIR` to keep data somewhere other than `~/.local/share/minarbot/new-app`. Rebuild the UI with `npm run build` in `app/` after changing it.
 
 ## How it fits together
 
 | Path | What it is |
 |---|---|
-| `crates/briefsip-server` | Rust server (Tokio, Axum, SQLite): agents, turns, engines, tools, automation, machines |
-| `crates/briefsip-launcher` | Rust launcher that starts the server, installs updates and rolls back |
+| `crates/minarbot-server` | Rust server (Tokio, Axum, SQLite): agents, turns, engines, tools, automation, machines |
+| `crates/minarbot-launcher` | Rust launcher that starts the server, installs updates and rolls back |
 | `app/src` | React and TypeScript UI, built with Vite |
 | `app/*.test.ts` | Node test suite that drives the Rust server end to end |
 | `desktop` | Electron desktop app (Linux AppImage) |
@@ -143,4 +143,4 @@ Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, ch
 
 ## License
 
-Briefsip's own code is licensed under the [Apache License 2.0](LICENSE). Some parts are adapted from MIT-licensed projects (T3 Code, Hermes Agent and Bot HQ), and the Computer viewer uses noVNC. Their licenses live next to that code in `NOTICE` and `*.LICENSE` files, with `provenance.json` records of what was adapted.
+Minarbot's own code is licensed under the [Apache License 2.0](LICENSE). Some parts are adapted from MIT-licensed projects (T3 Code, Hermes Agent and Bot HQ), and the Computer viewer uses noVNC. Their licenses live next to that code in `NOTICE` and `*.LICENSE` files, with `provenance.json` records of what was adapted.

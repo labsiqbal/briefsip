@@ -15,16 +15,16 @@ export const isReconnecting = (error: unknown) =>
 export async function readJson<T>(response: Response, fallback = `HTTP ${response.status}`): Promise<T> {
   const text = await response.text().catch(error => {
     if (error instanceof Error && error.name === 'AbortError') throw error;
-    throw new ConnectionError('Briefsip connection lost. Try again.');
+    throw new ConnectionError('Minarbot connection lost. Try again.');
   });
   let body: unknown;
   try {
     body = JSON.parse(text);
   } catch {
     if ([502, 503, 504].includes(response.status)) {
-      throw new HttpError(response.status, 'Briefsip is restarting. Try again in a moment.', undefined, true);
+      throw new HttpError(response.status, 'Minarbot is restarting. Try again in a moment.', undefined, true);
     }
-    if (response.ok) throw new Error('Briefsip returned an invalid response. Try again.');
+    if (response.ok) throw new Error('Minarbot returned an invalid response. Try again.');
     throw new HttpError(response.status, fallback);
   }
   if (!response.ok) {

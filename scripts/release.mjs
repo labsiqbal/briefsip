@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { productEnv } from '../desktop/src/rename-env.mjs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createPrivateKey, createPublicKey, createHash, sign, verify } from 'node:crypto';
 import { closeSync, constants, cpSync, createReadStream, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
@@ -6,13 +7,13 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
+import { githubRepository, bridgeArchiveName, stageBridgeAliases } from './rename-compat.mjs';
 import { durableWrite, fileManifest, parseRelease, syncDirectory, verifyRelease } from './release-lib.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const githubRepository = 'labsiqbal/briefsip';
 const releasePublicKey = 'kSIv+agT4RsABust/LmvPVjfWDxZxM0YKL03gts/UEM=';
 
 export function readIssueComments(issue) {
-  return JSON.parse(execFileSync('gh', ['issue', 'view', String(issue), '-R', 'labsiqbal/briefsip', '--json', 'comments'], { encoding: 'utf8' })).comments;
+  return JSON.parse(execFileSync('gh', ['issue', 'view', String(issue), '-R', githubRepository, '--json', 'comments'], { encoding: 'utf8' })).comments;
 }
 
 export function assertNativeDependencies(binary) {
@@ -64,7 +65,7 @@ function github(args, cwd = root) {
 
 async function signedRuntimeAssets(releases, directory, info, keyPath) {
   const { version, id, commit, notes, created } = info;
-  const archive = `briefsip-${version}-linux-x86_64.tar.gz`;
+  const archive = bridgeArchiveName(version);
   const names = [archive, 'latest.json', 'latest.json.sig'];
   const bundle = join(directory, 'signed');
   const cached = existsSync(bundle);
@@ -77,7 +78,7 @@ async function signedRuntimeAssets(releases, directory, info, keyPath) {
     const bytes = Buffer.from(JSON.stringify({ version, id, commit, archive, sha256: archiveHash, size: statSync(archiveFile).size, notes, created }));
     const signature = sign(null, bytes, key);
     const publicKey = createPublicKey({ format: 'jwk', key: { kty: 'OKP', crv: 'Ed25519', x: Buffer.from(releasePublicKey, 'base64').toString('base64url') } });
-    if (!verify(null, bytes, publicKey, signature)) throw new Error('Signing key does not match the Briefsip release public key.');
+    if (!verify(null, bytes, publicKey, signature)) throw new Error('Signing key does not match the Minarbot release public key.');
     const encoded = signature.toString('base64');
     if (cached) {
       if (!readFileSync(manifestFile).equals(bytes) || readFileSync(signatureFile, 'utf8') !== encoded) throw new Error('Cached signed release assets changed.');
@@ -105,7 +106,7 @@ async function publishGithub(releases, id, keyPath) {
   const desktopHashes = await Promise.all(desktop.map(sha256));
   if (ready.desktop && !desktopHashes.every((hash, i) => hash === ready.desktop[i])) throw new Error('Local desktop assets changed after the release build.');
   const { files, archiveHash } = await signedRuntimeAssets(releases, directory, info, keyPath);
-  const tag = `v${version}`, title = `Briefsip ${version}`, repo = ['-R', githubRepository];
+  const tag = `v${version}`, title = `Minarbot ${version}`, repo = ['-R', githubRepository];
   const hashes = [archiveHash, ...await Promise.all(files.slice(1).map(sha256)), ...desktopHashes];
   const assets = [...files, ...desktop].map((file, i) => ({ file, name: basename(file), digest: `sha256:${hashes[i]}` }));
   const paths = list => list.map(asset => relative(directory, asset.file));
@@ -150,7 +151,7 @@ async function publishGithub(releases, id, keyPath) {
 }
 
 function desktopAssets(directory, version) {
-  const name = `Briefsip-${version}-x86_64.AppImage`;
+  const name = `Minarbot-${version}-x86_64.AppImage`;
   const image = join(directory, name), metadata = join(directory, 'latest-linux.yml');
   // ponytail: read electron-builder's fixed version and path lines. Parse YAML if accepting metadata from other builders.
   const yaml = readFileSync(metadata, 'utf8');
@@ -160,7 +161,7 @@ function desktopAssets(directory, version) {
   return [image, metadata];
 }
 
-export function buildRelease({ source = join(root, 'app'), releases = join(homedir(), '.local/share/briefsip/releases'), allowDirty = false, notes, build = true, install = true, repository = root, issues = [], readIssueComments: readComments = readIssueComments } = {}) {
+export function buildRelease({ source = join(root, 'app'), releases = join(homedir(), '.local/share/minarbot/releases'), allowDirty = false, notes, build = true, install = true, repository = root, issues = [], readIssueComments: readComments = readIssueComments } = {}) {
   const git = args => execFileSync('git', args, { cwd: repository, encoding: 'utf8' }).trim();
   if (!Array.isArray(issues) || issues.some(issue => !Number.isSafeInteger(issue) || issue <= 0)) throw new Error('Invalid issues. Use --issues 30,31 with positive issue numbers.');
   issues = [...new Set(issues)];
@@ -170,7 +171,7 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
   for (const issue of issues) {
     let comments;
     try { comments = readComments(issue); }
-    catch { throw new Error(`Issue #${issue}: cannot read claim comments. Check gh authentication and access to labsiqbal/briefsip, then retry.`); }
+    catch { throw new Error(`Issue #${issue}: cannot read claim comments. Check gh authentication and access to ${githubRepository}, then retry.`); }
     if (!Array.isArray(comments) || comments.some(comment => typeof comment?.body !== 'string')) throw new Error(`Issue #${issue}: invalid comments. Fix the issue reader and retry.`);
     const branches = [...new Set(comments.flatMap(comment => [...comment.body.matchAll(/^Claimed by [^\r\n]+, branch (t3\/\S+)[ \t]*\r?$/gm)].map(match => match[1])))];
     if (!branches.length) throw new Error(`Issue #${issue}: no claim comment. Add "Claimed by <agent>, branch t3/<slug>" and retry.`);
@@ -191,24 +192,25 @@ export function buildRelease({ source = join(root, 'app'), releases = join(homed
     // Publication copies from this directory, so a caller's CARGO_TARGET_DIR must not redirect the build.
     const cargoEnv = { ...process.env, CARGO_TARGET_DIR: join(repository, 'target') };
     for (const args of [['fmt', '--check'], ['clippy', '--all-targets', '--', '-D', 'warnings'], ['test'], ['build', '--release', '--locked']]) execFileSync('cargo', args, { cwd: repository, stdio: 'inherit', env: cargoEnv });
-    execFileSync(process.execPath, [join(repository, 'scripts/resource-gate.mjs'), join(repository, 'target/release/briefsip-server'), join(repository, 'scripts/budgets.json'), join(repository, 'target/release/briefsip-launcher')], { cwd: repository, stdio: 'inherit', env: { ...process.env, TMPDIR: '/dev/shm' } });
+    execFileSync(process.execPath, [join(repository, 'scripts/resource-gate.mjs'), join(repository, 'target/release/minarbot-server'), join(repository, 'scripts/budgets.json'), join(repository, 'target/release/minarbot-launcher')], { cwd: repository, stdio: 'inherit', env: { ...process.env, TMPDIR: '/dev/shm' } });
     const gate = repository === root
       ? ['systemd-run', '--user', '--scope', '-q', '-p', 'MemoryMax=4G', '-p', 'MemorySwapMax=0', 'env', 'NODE_OPTIONS=--max-old-space-size=2048', 'TMPDIR=/dev/shm', process.execPath]
       : [process.execPath];
-    execFileSync(gate[0], [...gate.slice(1), join(repository, 'scripts/production-env-gate.mjs'), join(repository, 'target/release/briefsip-server'), join(repository, 'target/release/briefsip-launcher')], { cwd: repository, stdio: 'inherit' });
+    execFileSync(gate[0], [...gate.slice(1), join(repository, 'scripts/production-env-gate.mjs'), join(repository, 'target/release/minarbot-server'), join(repository, 'target/release/minarbot-launcher')], { cwd: repository, stdio: 'inherit' });
   }
   mkdirSync(releases, { recursive: true, mode: 0o700 });
   const stage = mkdtempSync(join(releases, '.staging-'));
   try {
     // Runtime source only. Never include workspace data, .env, test fixtures or development bundles.
     stageRuntime(source, stage);
-    if (rust && existsSync(join(repository, 'target/release/briefsip-server')) && existsSync(join(repository, 'target/release/briefsip-launcher'))) {
-      mkdirSync(join(stage, 'bin'), { recursive: true, mode: 0o700 }); cpSync(join(repository, 'target/release/briefsip-server'), join(stage, 'bin/briefsip-server'));
-      cpSync(join(repository, 'target/release/briefsip-launcher'), join(stage, 'bin/briefsip-launcher'));
-      for (const name of ['briefsip-server', 'briefsip-launcher']) assertNativeDependencies(join(stage, 'bin', name));
-      cpSync(join(repository, 'crates/briefsip-launcher/provenance.json'), join(stage, 'bin/launcher-provenance.json'));
-      cpSync(join(repository, 'crates/briefsip-launcher/NOTICE'), join(stage, 'bin/launcher.NOTICE'));
-      cpSync(join(repository, 'crates/briefsip-server/provenance.json'), join(stage, 'bin/provenance.json'));
+    if (rust && existsSync(join(repository, 'target/release/minarbot-server')) && existsSync(join(repository, 'target/release/minarbot-launcher'))) {
+      mkdirSync(join(stage, 'bin'), { recursive: true, mode: 0o700 }); cpSync(join(repository, 'target/release/minarbot-server'), join(stage, 'bin/minarbot-server'));
+      cpSync(join(repository, 'target/release/minarbot-launcher'), join(stage, 'bin/minarbot-launcher'));
+      for (const name of ['minarbot-server', 'minarbot-launcher']) assertNativeDependencies(join(stage, 'bin', name));
+      stageBridgeAliases(join(stage, 'bin'));
+      cpSync(join(repository, 'crates/minarbot-launcher/provenance.json'), join(stage, 'bin/launcher-provenance.json'));
+      cpSync(join(repository, 'crates/minarbot-launcher/NOTICE'), join(stage, 'bin/launcher.NOTICE'));
+      cpSync(join(repository, 'crates/minarbot-server/provenance.json'), join(stage, 'bin/provenance.json'));
       for (const name of ['LICENSE', 'agent-delegation.LICENSE']) cpSync(join(repository, 'app', name), join(stage, 'bin', name));
     }
     mkdirSync(join(stage, 'machine'), { mode: 0o700 });
@@ -233,10 +235,10 @@ export function stageRuntime(source, stage) {
     mkdirSync(join(stage, 't3'), { recursive: true });
     cpSync(file, join(stage, 't3', name));
   }
-  const command = join(source, 'scripts', 'briefsip-command.sh');
+  const command = join(source, 'scripts', 'minarbot-command.sh');
   if (existsSync(command)) {
     mkdirSync(join(stage, 'scripts'), { recursive: true });
-    cpSync(command, join(stage, 'scripts', 'briefsip-command.sh'));
+    cpSync(command, join(stage, 'scripts', 'minarbot-command.sh'));
   }
   const worker = join(source, 'shared-data-worker.py');
   if (existsSync(worker)) {
@@ -249,8 +251,9 @@ async function releaseCommand() {
     releases: { type: 'string' }, notes: { type: 'string' }, issues: { type: 'string' }, desktop: { type: 'boolean' },
     'allow-dirty': { type: 'boolean' }, 'no-github': { type: 'boolean' }, 'github-only': { type: 'string' }, 'signing-key': { type: 'string' },
   } });
-  const releases = resolve(values.releases ?? join(homedir(), '.local/share/briefsip/releases'));
-  const keyPath = values['signing-key'] ?? process.env.BRIEFSIP_RELEASE_SIGNING_KEY ?? join(homedir(), '.config/briefsip-release/signing-ed25519.pem');
+  const releases = resolve(values.releases ?? join(homedir(), '.local/share/minarbot/releases'));
+  const keyPath = values['signing-key'] ?? productEnv('MINARBOT_RELEASE_SIGNING_KEY')
+    ?? join(homedir(), '.config/minarbot-release/signing-ed25519.pem');
   const retryId = values['github-only'], allowDirty = values['allow-dirty'], { notes, desktop } = values;
   if (retryId !== undefined) {
     if ([allowDirty, values['no-github'], values.issues, notes, desktop].some(value => value !== undefined)) {

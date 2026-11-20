@@ -10,7 +10,7 @@ import { startApp } from './test-bridge.ts';
 
 
 test('Rust workflow schedules retain offline work and coalesce provider-free occurrences', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-rust-schedule-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-rust-schedule-'));
   const now = Date.now();
   const options = { database: join(directory, 'state.sqlite'), fixedClock: now };
   const app = await startApp(options);
@@ -50,7 +50,7 @@ test('Rust workflow schedules retain offline work and coalesce provider-free occ
 });
 
 test('Rust workflow schedules skip busy approvals once and leave offline work due until a provider returns', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-schedule-busy-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-schedule-busy-'));
   const now = Date.now(), database = join(directory, 'state.sqlite');
   const provider = createServer((_req, res) => res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'yes' } }] })));
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));
@@ -147,7 +147,7 @@ test('Rust workflow schedules skip busy approvals once and leave offline work du
 });
 
 test('Rust cron preview preserves UTC ordering through midnight folds and rejects dense schedules', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-rust-cron-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-rust-cron-'));
   const now = Date.parse('2026-11-01T00:00:00Z');
   const options = { database: join(directory, 'state.sqlite'), fixedClock: now };
   const app = await startApp(options);

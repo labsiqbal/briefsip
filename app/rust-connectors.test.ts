@@ -14,7 +14,7 @@ import { encryptMail, serializeMailEnvelope } from './test-support/mail-fixture.
 import { composioToolName } from './test-support/composio-tool-name.ts';
 
 test('Rust Composio approval recovery, revocation, schema checks and uncertain writes remain fenced', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-composio-')), database = join(root, 'db');
+  const root = mkdtempSync(join(tmpdir(), 'minarbot-rust-composio-')), database = join(root, 'db');
   const key = 'FIXTURE_COMPOSIO_KEY_93', agent = randomUUID(), responses: string[] = [], effects: unknown[] = [];
   let mode = 'read', disconnected = false, reachedUpstream!: () => void;
   const upstreamAccepted = new Promise<void>(resolve => { reachedUpstream = resolve; });
@@ -101,7 +101,7 @@ test('Rust Composio approval recovery, revocation, schema checks and uncertain w
   } finally { await app.close(); await Promise.all([close(remote), close(provider)]); rmSync(root, { recursive: true, force: true }); }
 });
 for (const platform of ['slack', 'telegram']) test(`Rust ${platform} offline recovery preserves confirmed delivery and requires confirmation`, async () => {
-  const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-journal-')), directory = join(root, 'state'), id = randomUUID();
+  const root = mkdtempSync(join(tmpdir(), 'minarbot-rust-journal-')), directory = join(root, 'state'), id = randomUUID();
   const command = (command: string, extra = {}) => runRustConnectorJournal({ directory, platform, command, ...extra });
   try {
     const initial = await command('status'); assert.deepEqual(initial.inbox, []); assert.deepEqual(initial.outbox, []);
@@ -144,7 +144,7 @@ function frame(value: unknown) {
 for (const platform of ['telegram', 'slack'] as const) for (const mode of ['reply', 'question', 'file', 'workflow', 'media']) {
   const question = mode === 'question', file = mode === 'file', workflow = mode === 'workflow', media = mode === 'media';
   test(`Rust ${platform} runner ${mode} through native turns`, async () => {
-    const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-connector-')), agent = randomUUID(), controller = new AbortController();
+    const root = mkdtempSync(join(tmpdir(), 'minarbot-rust-connector-')), agent = randomUUID(), controller = new AbortController();
     const sockets = new Set<import('node:stream').Duplex>();
     let calls = 0, deliveries = 0, answer: string | undefined, offset = 0, acknowledgements = 0, connections = 0;
     const requests: string[] = [];
@@ -264,7 +264,7 @@ for (const platform of ['telegram', 'slack'] as const) for (const mode of ['repl
 }
 
 test('Rust calendar exports folded and escaped iCalendar with exact UTC intervals and IANA gap/fold times', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-calendar-')), database = join(root, 'db'), agent = randomUUID(), now = Date.UTC(2026, 0, 1);
+  const root = mkdtempSync(join(tmpdir(), 'minarbot-rust-calendar-')), database = join(root, 'db'), agent = randomUUID(), now = Date.UTC(2026, 0, 1);
   const app = await startRustServer({ database, fixedClock: now });
   const response = await fetch(app.origin + '/api/agents', { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ id: agent, runtime: 'api', name: 'Calendar', model: 'fixture', instructions: 'Help' }) });
   assert(response.ok); await response.json();
@@ -285,13 +285,13 @@ test('Rust calendar exports folded and escaped iCalendar with exact UTC interval
     assert(raw.endsWith('END:VCALENDAR\r\n'));
     assert(raw.split('\r\n').every(line => Buffer.byteLength(line) <= 75));
     const lines = raw.replace(/\r\n /g, '').split('\r\n');
-    assert.deepEqual(lines.slice(0, 4), ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Briefsip//Routines//EN', 'CALSCALE:GREGORIAN']);
+    assert.deepEqual(lines.slice(0, 4), ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Minarbot//Routines//EN', 'CALSCALE:GREGORIAN']);
     let at = 4;
     const starts = ['20260101T000000Z', '20260308T070000Z', '20261101T053000Z', '20111230T100000Z'];
     for (const [index, row] of entries.slice(0, 4).entries()) {
       const summary = index === 0 ? 'Calendar\\; comma\\, \\\\ line\\nBEGIN:VEVENT ' + 'é'.repeat(100) : row.name;
       const event = [
-        'BEGIN:VEVENT', `UID:${row.id}@briefsip.local`, 'DTSTAMP:20260101T000000Z',
+        'BEGIN:VEVENT', `UID:${row.id}@minarbot.local`, 'DTSTAMP:20260101T000000Z',
         `SEQUENCE:${row.revision}`, `DTSTART:${starts[index]}`, `SUMMARY:${summary}`,
         ...(index === 0 ? ['RRULE:FREQ=SECONDLY;INTERVAL=3600'] : []), 'END:VEVENT',
       ];
@@ -307,7 +307,7 @@ test('Rust calendar exports folded and escaped iCalendar with exact UTC interval
 });
 
 test('Rust mail retries exact envelope after lost response and fences expired, revoked, tampered and exhausted jobs', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'briefsip-rust-mail-')), database = join(root, 'db');
+  const root = mkdtempSync(join(tmpdir(), 'minarbot-rust-mail-')), database = join(root, 'db');
   const db = testDatabase(database); installFrozenNodeSchema(db);
   const account = randomUUID(), project = randomUUID(), keyId = randomUUID(), key = randomBytes(32), now = Date.now();
   const generation = String(db.prepare('SELECT generation FROM authority_state').get()!.generation);
@@ -331,7 +331,7 @@ test('Rust mail retries exact envelope after lost response and fences expired, r
     if (lose) { req.socket.destroy(); return; } res.end(JSON.stringify({ id: 'fixture-mail' }));
   });
   const origin = await listen(remote), keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
-  const options = { database, auth: { secretKey: 'sk_test_fixture', publishableKey: 'pk_test_fixture', issuer: 'https://fixture.clerk.accounts.dev', origin: 'https://briefsip.example', development: true, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString() }, mailApiKey: 'synthetic-mail-key', mailEndpoint: origin + '/emails', testKeyring: { [`mail-aead/${keyId}`]: key.toString('base64url'), 'sync-hmac/v1': randomBytes(32).toString('base64url') } };
+  const options = { database, auth: { secretKey: 'sk_test_fixture', publishableKey: 'pk_test_fixture', issuer: 'https://fixture.clerk.accounts.dev', origin: 'https://minarbot.example', development: true, jwtKey: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString() }, mailApiKey: 'synthetic-mail-key', mailEndpoint: origin + '/emails', testKeyring: { [`mail-aead/${keyId}`]: key.toString('base64url'), 'sync-hmac/v1': randomBytes(32).toString('base64url') } };
   let app = await startApp(options, { directory: root, servers: [remote] }).catch(error => { db.close(); throw error; });
   const state = (id: string) => db.prepare('SELECT state,attempts,length(ciphertext) bytes FROM mail_outbox WHERE id=?').get(id)!;
   try {

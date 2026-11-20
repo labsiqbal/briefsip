@@ -17,7 +17,7 @@ const due = now - 960000;
 const graph = JSON.stringify({ entry: 'out', maxSteps: 1, nodes: [{ id: 'out', kind: 'output' }] });
 
 function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-old-automation-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-old-automation-'));
   const database = join(dir, 'state.sqlite'), db = testDatabase(database);
   const owner = randomUUID(), project = randomUUID(), agent = randomUUID(), home = randomUUID(), installation = randomUUID();
   installFrozenNodeSchema(db);

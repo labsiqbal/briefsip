@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 
 test('preview endpoint preserves file bytes and enforces direct/channel/thread scope', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-html-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-html-'));
   const app = await startApp({ database: join(dir, 'db.sqlite') });
   async function post(path: string, body: unknown) {
     const res = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); assert(res.ok); return res.json();

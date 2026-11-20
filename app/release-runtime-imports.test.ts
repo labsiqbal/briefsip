@@ -10,15 +10,15 @@ import { fileURLToPath } from 'node:url';
 const { stageRuntime } = await import(new URL('../scripts/release.mjs', import.meta.url).href);
 
 test('release stages Rust runtime inputs and T3 notices without Node source', () => {
-  const stage = mkdtempSync(join(tmpdir(), 'briefsip-runtime-'));
+  const stage = mkdtempSync(join(tmpdir(), 'minarbot-runtime-'));
   try {
     stageRuntime(fileURLToPath(new URL('./', import.meta.url)), stage);
     assert.deepEqual(readdirSync(join(stage, 'app')), ['shared-data-worker.py']);
     assert.deepEqual(readFileSync(join(stage, 'app/shared-data-worker.py')), readFileSync(new URL('./shared-data-worker.py', import.meta.url)));
     assert.deepEqual(readdirSync(join(stage, 't3')).sort(), ['NOTICE', 'provenance.json']);
-    assert.deepEqual(readdirSync(join(stage, 'scripts')), ['briefsip-command.sh']);
+    assert.deepEqual(readdirSync(join(stage, 'scripts')), ['minarbot-command.sh']);
     mkdirSync(join(stage, 'bin'), { recursive: true });
-    cpSync(rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY), join(stage,'bin/briefsip-server'));
+    cpSync(rustBinary('minarbot-server', process.env.MINARBOT_RUST_BINARY), join(stage,'bin/minarbot-server'));
     const library = join(stage, 'library'); mkdirSync(library);
     const skills = spawnSync('npm', ['--silent', 'run', 'skills', '--', 'list', library], { cwd: stage, encoding: 'utf8' });
     assert.equal(skills.status, 0, skills.stderr);

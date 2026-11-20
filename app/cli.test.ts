@@ -9,10 +9,10 @@ import { spawn } from 'node:child_process';
 import { testDatabase } from './test-support/database.ts';
 import { rustBinary } from './rust-binary.ts';
 
-const binary = () => rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
+const binary = () => rustBinary('minarbot-server', process.env.MINARBOT_RUST_BINARY);
 function cli(args: string[], directory: string) {
   return new Promise<{ exitCode: number; id?: string; agents?: { id: string }[]; threads?: { id: string }[]; conversation?: { name: string }; turn?: any }>((resolve, reject) => {
-    const child = spawn(binary(), ['script', ...args], { env: { ...process.env, BRIEFSIP_SCRIPT_DIRECTORY: directory }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(binary(), ['script', ...args], { env: { ...process.env, MINARBOT_SCRIPT_DIRECTORY: directory }, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = ''; child.stdout.on('data', chunk => { output += chunk; }); child.stderr.resume(); child.on('error', reject);
     child.on('close', code => { try { const result = JSON.parse(output); assert.equal(result.exitCode, code); resolve(result); } catch (error) { reject(error); } });
   });
@@ -20,7 +20,7 @@ function cli(args: string[], directory: string) {
 import { startApp } from './test-bridge.ts';
 
 test('CLI routine lists and histories stay within the selected granted agent', async t => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-cli-routines-')), directory = join(dir, 'scripts');
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-cli-routines-')), directory = join(dir, 'scripts');
   let catalogFails = false;
   const prompts: string[] = []; let answer = 'Routine result';
   const provider = createServer(async (req, res) => { if (req.method === 'GET') { res.statusCode = catalogFails ? 502 : 200; res.end(JSON.stringify({ data: [{ id: 'fixture' }, { id: 'fixture-alt' }] })); return; } let raw=''; for await (const chunk of req) raw+=chunk; prompts.push(JSON.parse(raw).messages.at(-1).content); res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: answer } }] })); });
@@ -42,7 +42,7 @@ test('CLI routine lists and histories stay within the selected granted agent', a
   t.after(async () => { await app.close(); proxy.closeAllConnections(); await new Promise<void>(resolve => proxy.close(() => resolve())); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); });
   const ui = async (path: string, body: unknown) => { const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); const value = await response.json(); assert(response.ok, JSON.stringify(value)); return value; };
   const terminal = (args: string[]) => new Promise<any>((resolve, reject) => {
-    const child = spawn(binary(), ['script', ...args], { cwd: import.meta.dirname, env: { ...process.env, BRIEFSIP_SCRIPT_DIRECTORY: directory }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(binary(), ['script', ...args], { cwd: import.meta.dirname, env: { ...process.env, MINARBOT_SCRIPT_DIRECTORY: directory }, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = ''; child.stdout.on('data', chunk => { output += chunk; }); child.stderr.resume(); child.on('error', reject);
     child.on('close', code => { try { const value = JSON.parse(output); assert.equal(value.exitCode, code); resolve(value); } catch (error) { reject(error); } });
   });
@@ -111,7 +111,7 @@ test('CLI routine lists and histories stay within the selected granted agent', a
 });
 
 test('CLI workflow discovery paginates and explicit approvals retain identity after lost responses', async t => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-cli-approvals-')), directory = join(dir, 'scripts');
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-cli-approvals-')), directory = join(dir, 'scripts');
   const options = { database: join(dir, 'db.sqlite'), scriptDirectory: directory };
   let app = await startApp(options), drop = false;
   const decisions: string[] = [];
@@ -136,7 +136,7 @@ test('CLI workflow discovery paginates and explicit approvals retain identity af
     const result = await response.json(); assert(response.ok, JSON.stringify(result)); return result;
   };
   const terminal = (args: string[]) => new Promise<any>((resolve, reject) => {
-    const child = spawn(binary(), ['script', ...args], { cwd: import.meta.dirname, env: { ...process.env, BRIEFSIP_SCRIPT_DIRECTORY: directory }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(binary(), ['script', ...args], { cwd: import.meta.dirname, env: { ...process.env, MINARBOT_SCRIPT_DIRECTORY: directory }, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = ''; child.stdout.on('data', chunk => { output += chunk; }); child.stderr.resume(); child.on('error', reject);
     child.on('close', code => { try { const result = JSON.parse(output); assert.equal(code, result.exitCode); resolve(result); } catch (error) { reject(error); } });
   });
@@ -249,7 +249,7 @@ test('CLI workflow discovery paginates and explicit approvals retain identity af
 });
 
 test('script CLI discovers only grants, sends once, waits, preserves retry ID and reports attention/timeouts', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-cli-')); let calls = 0;
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-cli-')); let calls = 0;
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk; calls++;
     const text = JSON.parse(raw).messages.at(-1).content;
@@ -289,12 +289,12 @@ test('script CLI discovers only grants, sends once, waits, preserves retry ID an
     assert.equal((await cli(['cancel',a.id,id], directory)).exitCode, 1);
     assert.equal((await cli(['status',a.id,held.id], directory)).exitCode, 1);
     const output = await new Promise<string>((resolve, reject) => {
-      const child = spawn(binary(), ['script','list'], { cwd: import.meta.dirname, env: { ...process.env, BRIEFSIP_SCRIPT_DIRECTORY: directory }, stdio: ['ignore','pipe','pipe'] });
+      const child = spawn(binary(), ['script','list'], { cwd: import.meta.dirname, env: { ...process.env, MINARBOT_SCRIPT_DIRECTORY: directory }, stdio: ['ignore','pipe','pipe'] });
       let text = ''; child.stdout.on('data', chunk => { text += chunk; }); child.stderr.resume(); child.on('error', reject); child.on('close', code => { if (code !== 0) reject(new Error(`CLI exit ${code}`)); else resolve(text); });
     });
     assert.equal(JSON.parse(output).agents.length, 2); assert(!output.includes(JSON.parse(readFileSync(join(directory,'connection.json'),'utf8')).token));
     const unicode = await new Promise<string>((resolve, reject) => {
-      const child = spawn(binary(), ['script','run',a.id,'-','--wait','--timeout','3'], { cwd: import.meta.dirname, env: { ...process.env, BRIEFSIP_SCRIPT_DIRECTORY: directory }, stdio: ['pipe','pipe','pipe'] });
+      const child = spawn(binary(), ['script','run',a.id,'-','--wait','--timeout','3'], { cwd: import.meta.dirname, env: { ...process.env, MINARBOT_SCRIPT_DIRECTORY: directory }, stdio: ['pipe','pipe','pipe'] });
       let text = ''; child.stdout.on('data', chunk => { text += chunk; }); child.stderr.resume(); child.on('error', reject); child.on('close', code => { if (code !== 0) reject(new Error(`CLI exit ${code}: ${text}`)); else resolve(text); });
       child.stdin.write(Buffer.from([0x63,0x61,0x66,0xc3]));
       setTimeout(() => child.stdin.end(Buffer.from([0xa9])), 500);
@@ -400,7 +400,7 @@ test('script CLI discovers only grants, sends once, waits, preserves retry ID an
 });
 
 test('CLI answers retain receipt identity across lost replies and restart', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-cli-answer-')); let calls = 0, drop = false, dropStatus = false, dropThread = false, dropSide = false;
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-cli-answer-')); let calls = 0, drop = false, dropStatus = false, dropThread = false, dropSide = false;
   const posts: string[] = [], answers: string[] = [];
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk; calls++;
@@ -432,7 +432,7 @@ test('CLI answers retain receipt identity across lost replies and restart', asyn
   }
   async function terminal(args: string[], input?: string) {
     return await new Promise<any>((resolve, reject) => {
-      const child = spawn(binary(), ['script',...args], { cwd: import.meta.dirname, env: { ...process.env, BRIEFSIP_SCRIPT_DIRECTORY: directory }, stdio: ['pipe','pipe','pipe'] });
+      const child = spawn(binary(), ['script',...args], { cwd: import.meta.dirname, env: { ...process.env, MINARBOT_SCRIPT_DIRECTORY: directory }, stdio: ['pipe','pipe','pipe'] });
       let output = ''; child.stdout.on('data', chunk => { output += chunk; }); child.stderr.resume(); child.on('error', reject);
       child.on('close', code => { try { const result = JSON.parse(output); assert.equal(result.exitCode, code); resolve(result); } catch (error) { reject(error); } }); child.stdin.end(input);
     });

@@ -1,3 +1,4 @@
+import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { HttpError, readJson } from './http';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { RefreshCw, X } from 'lucide-react';
@@ -16,10 +17,10 @@ export function useConversationAttachments({ path, archived, attached, onAttach,
 }) {
   type StoredFile = { seq: number; id: string; name: string; size: number; image?: boolean };
   type Upload = { id: string; name: string; size: number; digest: string; file?: File; attach?: boolean };
-  const storageKey = `briefsip:upload:${path}`;
+  const storageKey = `minarbot:upload:${path}`;
   const [recovered] = useState<Upload | null>(() => {
     try {
-      const value = JSON.parse(sessionStorage.getItem(storageKey) ?? 'null');
+      const value = JSON.parse(readProductStorage(sessionStorage, storageKey) ?? 'null');
       return value && /^[0-9a-f-]{36}$/i.test(value.id) && typeof value.name === 'string' && Number.isSafeInteger(value.size) && value.size >= 0 && value.size <= 10 * 1024 * 1024 && /^[0-9a-f]{64}$/.test(value.digest) ? { id: value.id, name: value.name, size: value.size, digest: value.digest, attach: value.attach === true } : null;
     } catch { return null; }
   });
@@ -41,7 +42,7 @@ export function useConversationAttachments({ path, archived, attached, onAttach,
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   function clearUpload(id: string) {
-    if (JSON.parse(sessionStorage.getItem(storageKey) ?? 'null')?.id === id) sessionStorage.removeItem(storageKey);
+    if (JSON.parse(readProductStorage(sessionStorage, storageKey) ?? 'null')?.id === id) removeProductStorage(sessionStorage, storageKey);
     if (pending.current?.id === id) pending.current = null;
   }
   useEffect(() => {

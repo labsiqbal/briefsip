@@ -7,9 +7,9 @@ export class AgentMessageError extends Error { status = 409; }
 export function initializeAgentMessages(db: DatabaseSync) {
   initializeVisibility(db);
   if (!db.prepare('PRAGMA table_info(turns)').all().some(row => row.name === 'origin')) db.exec('ALTER TABLE turns ADD COLUMN origin TEXT');
-  db.exec(readFileSync(new URL('../../crates/briefsip-server/src/turns/agent-messages.sql', import.meta.url), 'utf8'));
+  db.exec(readFileSync(new URL('../../crates/minarbot-server/src/turns/agent-messages.sql', import.meta.url), 'utf8'));
   initializeDelegation(db);
-  db.exec(readFileSync(new URL('../../crates/briefsip-server/src/turns/rooms.sql', import.meta.url), 'utf8'));
+  db.exec(readFileSync(new URL('../../crates/minarbot-server/src/turns/rooms.sql', import.meta.url), 'utf8'));
   if (!db.prepare('PRAGMA table_info(room_discussions)').all().some(row => row.name === 'stopped')) db.exec('ALTER TABLE room_discussions ADD COLUMN stopped INTEGER NOT NULL DEFAULT 0');
 }
 export function canMessage(db: DatabaseSync, turn: string) {

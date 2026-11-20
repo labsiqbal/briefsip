@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 const runtimes = ['codex', 'claude', 'hermes', 'antigravity', 'grok', 'pi', 'opencode', 'gemini', 'kiro'];
 
 test('folder browser and runtime discovery retain JSON strings and advertised models', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-rehearsal-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-rehearsal-'));
   const home = join(directory, 'home'), executable = join(directory, 'fake-harness');
   mkdirSync(join(home, 'Folder'), { recursive: true });
   writeFileSync(executable, `#!${process.execPath}

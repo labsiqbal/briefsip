@@ -1,3 +1,4 @@
+import { readProductStorage, removeProductStorage } from './rename-storage.ts';
 import { parseQuestionAnswer, type QuestionAnswer } from './question-answer.ts';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Card, Checkbox, Field, Textarea, useConfirm } from './ui/kit';
@@ -5,18 +6,18 @@ export type Question = { id: string; prompt: string; choices: string[]; answer: 
 type Answer = QuestionAnswer;
 export function QuestionCard({ question, path, status, archived, request }: { question: Question; path: string; status: string; archived: boolean; request: <T>(path: string, data?: unknown) => Promise<T> }) {
   const confirm = useConfirm();
-  const key = `briefsip:answer:${question.id}`, draftKey = `${key}:draft`;
+  const key = `minarbot:answer:${question.id}`, draftKey = `${key}:draft`;
   const [recovery] = useState(() => {
     try {
-      const raw = sessionStorage.getItem(key), saved = raw === null ? null : parseQuestionAnswer(JSON.parse(raw), question.choices);
-      return { pending: saved as Answer | null, draft: sessionStorage.getItem(draftKey) ?? '', blocked: false };
+      const raw = readProductStorage(sessionStorage, key), saved = raw === null ? null : parseQuestionAnswer(JSON.parse(raw), question.choices);
+      return { pending: saved as Answer | null, draft: readProductStorage(sessionStorage, draftKey) ?? '', blocked: false };
     } catch { return { pending: null, draft: '', blocked: true }; }
   });
   const [pending, setPending] = useState<Answer | null>(recovery.pending), [text, setText] = useState(recovery.draft), [blocked, setBlocked] = useState(recovery.blocked);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [confirmed, setConfirmed] = useState(false);
   const mounted = useRef(false), sending = useRef(false), heading = useRef<HTMLHeadingElement>(null), focused = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  useEffect(() => { if (question.answer !== null) { try { sessionStorage.removeItem(key); sessionStorage.removeItem(draftKey); } catch { /* Saved server answer remains authoritative. */ } setPending(null); if (focused.current && document.activeElement === document.body) heading.current?.focus(); } }, [question.answer]);
+  useEffect(() => { if (question.answer !== null) { try { removeProductStorage(sessionStorage, key); removeProductStorage(sessionStorage, draftKey); } catch { /* Saved server answer remains authoritative. */ } setPending(null); if (focused.current && document.activeElement === document.body) heading.current?.focus(); } }, [question.answer]);
   function change(value: string) { setText(value); try { sessionStorage.setItem(draftKey, value); } catch { setError('Answer draft has not been saved. Copy the text before closing the conversation.'); } }
   async function send() {
     if (sending.current || blocked || archived || !['queued', 'interrupted'].includes(status)) return;
@@ -41,7 +42,7 @@ export function QuestionCard({ question, path, status, archived, request }: { qu
         {unavailable && <Alert>Questions cannot be answered while the task is stopped or the conversation is archived.</Alert>}
         <div className="k-row-actions">
           <Button type="submit" size="sm" variant="primary" disabled={busy || blocked || unavailable || !(pending?.text ?? text).trim() || status === 'interrupted' && !(pending?.acknowledgeUncertain ?? confirmed)}>{busy ? 'Sending...' : pending ? 'Retry answer' : 'Answer'}</Button>
-          {(pending || blocked) && <Button size="sm" disabled={busy} onClick={async () => { if (!await confirm({ title: 'Discard recovery data?', description: 'The answer may already be saved. Check history before sending another answer.', confirm: 'Discard recovery', danger: true })) return; try { sessionStorage.removeItem(key); setPending(null); setBlocked(false); setError(''); } catch { setError('Recovery data could not be deleted.'); } }}>Discard recovery</Button>}
+          {(pending || blocked) && <Button size="sm" disabled={busy} onClick={async () => { if (!await confirm({ title: 'Discard recovery data?', description: 'The answer may already be saved. Check history before sending another answer.', confirm: 'Discard recovery', danger: true })) return; try { removeProductStorage(sessionStorage, key); setPending(null); setBlocked(false); setError(''); } catch { setError('Recovery data could not be deleted.'); } }}>Discard recovery</Button>}
         </div>
       </form>}
     </div></Card>

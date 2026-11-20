@@ -1,4 +1,4 @@
-# SearXNG for Briefsip agents (web_search, issue #134). Loopback-only instance.
+# SearXNG for Minarbot agents (web_search, issue #134). Loopback-only instance.
 # Engines were chosen by testing from NUC (Indonesia, 2026-11-19):
 # - Google engines stay off: server IPs get "unusual traffic" CAPTCHAs.
 # - DuckDuckGo is off: blocked by Indonesian ISPs (DNS answers with another certificate).
@@ -8,7 +8,7 @@
 use_default_settings: true
 
 general:
-  instance_name: "Briefsip search"
+  instance_name: "Minarbot search"
   enable_metrics: false
   contact_url: false
 

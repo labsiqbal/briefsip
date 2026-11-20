@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 
 test('files preserve bytes, scope, retry identity and archive boundaries', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-files-')), database = join(dir, 'state.sqlite');
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-files-')), database = join(dir, 'state.sqlite');
   let app = await startApp({ database });
   const post = async (path: string, data: unknown) => {
     const response = await fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
@@ -97,7 +97,7 @@ test('files preserve bytes, scope, retry identity and archive boundaries', async
 
 test('text attachments reach only selected conversation and retain retry identity', async () => {
   const { createServer } = await import('node:http');
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-attachments-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-attachments-'));
   const calls: string[][] = [];
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;

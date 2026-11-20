@@ -13,7 +13,7 @@ function mp4Header(brand: string) {
 }
 
 test('HTTP transcription requires consent, isolates files and never silently replays uncertain requests', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-transcription-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-transcription-'));
   const bytes = Buffer.concat([mp4Header('M4A '), Buffer.from('synthetic audio transport bytes')]);
   let calls = 0, invalid: false | 'secret' | 'surrogate' | 'utf8' = false;
   const provider = createServer(async (req, res) => {
@@ -91,7 +91,7 @@ test('HTTP transcription requires consent, isolates files and never silently rep
 });
 
 test('in-flight transcription deduplicates and cannot publish after archive or shutdown', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-transcription-race-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-transcription-race-'));
   let calls = 0, release = () => {}, arrived = () => {};
   const provider = createServer(async (req, res) => {
     for await (const _ of req) { /* Drain multipart before holding response. */ }
@@ -128,7 +128,7 @@ test('in-flight transcription deduplicates and cannot publish after archive or s
 });
 
 test('transcription is opt-in and validates request bodies', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-transcription-off-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-transcription-off-'));
   const app = await startApp({ database: join(dir, 'state.sqlite') });
   const post = (path: string, data: unknown) => fetch(app.origin + path, { method: 'POST', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
   try {
@@ -145,7 +145,7 @@ test('transcription is opt-in and validates request bodies', async () => {
 });
 
 test('transcription rejects redirects and oversized output, and script grants cannot replace consent', async t => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-transcription-boundaries-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-transcription-boundaries-'));
   let mode = 'redirect', calls = 0, redirected = 0;
   const provider = createServer(async (req, res) => {
     const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(chunk);
@@ -174,7 +174,7 @@ test('transcription rejects redirects and oversized output, and script grants ca
     const script = `${app.origin}/api/scripts/agents/${agent.id}/threads/${thread.id}/files/${file}?transcription=1`;
     for (const method of ['GET', 'POST']) {
       const response = await fetch(script, { method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, ...(method === 'POST' ? { body: JSON.stringify({ id: randomUUID(), provider: info.provider.id, consent: true }) } : {}) });
-      assert.equal(response.status, 403); assert.match((await response.json()).error, /Transcription requires user approval in Briefsip\./);
+      assert.equal(response.status, 403); assert.match((await response.json()).error, /Transcription requires user approval in Minarbot\./);
     }
     assert.equal(calls, 0);
     let retryOf: string | undefined;
@@ -197,7 +197,7 @@ test('transcription rejects redirects and oversized output, and script grants ca
 
 
 test('Rust upgrades legacy transcription operations and reports unknown and duration usage', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-transcription-legacy-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-transcription-legacy-'));
   const database = join(directory, 'state.sqlite');
   let app = await startApp({ database });
   try {
@@ -236,7 +236,7 @@ test('Rust upgrades legacy transcription operations and reports unknown and dura
 });
 
 test('cancelling streamed transcription persists without publication or replay', async t => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-transcription-cancel-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-transcription-cancel-'));
   let calls = 0, holding = true, received = () => {}, disconnected = () => {};
   const provider = createServer(async (req, res) => {
     for await (const _ of req) { /* Consume audio before holding result stream. */ }

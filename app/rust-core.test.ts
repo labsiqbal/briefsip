@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { startApp } from './test-bridge.ts';
 
 test('core serves exact static bytes, strict asset CSP, HTML 404 and local boundary errors', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'briefsip-core-static-'));
+  const root = mkdtempSync(join(tmpdir(), 'minarbot-core-static-'));
   const app = await startApp({ database: join(root, 'db.sqlite') });
   try {
     const page = await fetch(app.origin); const html = await page.text();
@@ -23,14 +23,14 @@ test('core serves exact static bytes, strict asset CSP, HTML 404 and local bound
       const missing = await fetch(app.origin + path); assert.equal(missing.status, 404); assert.match(missing.headers.get('content-type')!, /text\/html/); await missing.text();
     }
     const denied = await fetch(app.origin + '/api/agents', { headers: { 'Sec-Fetch-Site': 'cross-site' } });
-    assert.equal(denied.status, 403); assert.deepEqual(await denied.json(), { error: 'Access is only allowed through the local Briefsip address.' });
+    assert.equal(denied.status, 403); assert.deepEqual(await denied.json(), { error: 'Access is only allowed through the local Minarbot address.' });
     const cookies = await fetch(app.origin + '/api/agents', { headers: { Cookie: '__session=untrusted' } });
     assert.equal(cookies.headers.get('set-cookie'), null); assert.equal(cookies.status, 200); await cookies.text();
   } finally { await app.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
 test('core SSE wire format replays persisted snapshots, isolates scopes and closes on shutdown', { timeout: 15000 }, async () => {
-  const root = mkdtempSync(join(tmpdir(), 'briefsip-core-events-')), database = join(root, 'db.sqlite');
+  const root = mkdtempSync(join(tmpdir(), 'minarbot-core-events-')), database = join(root, 'db.sqlite');
   let app = await startApp({ database });
   await app.close();
   const db = testDatabase(database), agent = randomUUID(), other = randomUUID(), turn = randomUUID();
@@ -82,11 +82,11 @@ test('core SSE wire format replays persisted snapshots, isolates scopes and clos
 });
 
 test('Rust test bridge rejects unported options before starting a process', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'briefsip-core-unported-'));
+  const root = mkdtempSync(join(tmpdir(), 'minarbot-core-unported-'));
   try {
     await assert.rejects(startApp({ database: join(root, 'db.sqlite'), ...{ unported: true } }), /not ported: option unported/);
     await assert.rejects(startApp({ database: join(root, 'db.sqlite'), hubLink: { origin: 'https://hub.example.test', hubSigningPublicKey: 'fixture', ...{ unported: true } } }), /not ported: option hubLink.unported/);
-    for (const concurrency of [NaN, Infinity, 0, 33]) await assert.rejects(startApp({ database: join(root, `db-${String(concurrency)}.sqlite`), concurrency }), /BRIEFSIP_CONCURRENCY must be 1\.\.32/);
+    for (const concurrency of [NaN, Infinity, 0, 33]) await assert.rejects(startApp({ database: join(root, `db-${String(concurrency)}.sqlite`), concurrency }), /MINARBOT_CONCURRENCY must be 1\.\.32/);
     assert(!existsSync(join(root, 'db.sqlite')));
   }
   finally { rmSync(root, { recursive: true, force: true }); }

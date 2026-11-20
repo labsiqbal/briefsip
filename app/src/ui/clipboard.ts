@@ -1,6 +1,6 @@
 // Adapted from T3 useCopyToClipboard.ts (MIT); see app/t3/provenance.json.
 export async function copyText(value: string): Promise<void> {
-  if (typeof window !== 'undefined' && window.top !== window) throw new Error('Copy is unavailable in embedded views. Open Briefsip directly.');
+  if (typeof window !== 'undefined' && window.top !== window) throw new Error('Copy is unavailable in embedded views. Open Minarbot directly.');
   try {
     if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(value); return; }
   } catch { /* Native editing remains available when the async API is denied. */ }
@@ -26,7 +26,7 @@ export async function copyText(value: string): Promise<void> {
 }
 
 export async function readClipboardText(): Promise<string> {
-  if (typeof window !== 'undefined' && window.top !== window) throw new Error('Clipboard is unavailable in embedded views. Open Briefsip directly.');
+  if (typeof window !== 'undefined' && window.top !== window) throw new Error('Clipboard is unavailable in embedded views. Open Minarbot directly.');
   try { return await navigator.clipboard.readText(); }
   catch { throw new Error('Clipboard could not be read. Use Paste text to enter it manually.'); }
 }

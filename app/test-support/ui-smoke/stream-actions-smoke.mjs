@@ -11,7 +11,7 @@ export async function streamActionsSmoke({ check, page, origin, screenshot, rele
     await page.reload(); await page.getByRole('tab', { name: /^Agents/ }).click();
     await page.getByRole('navigation', { name: 'Choose agent', exact: true }).getByRole('button', { name: new RegExp(`^${name} `) }).click();
   };
-  const palettes = [['briefsip', 'dark'], ['briefsip', 'light'], ['catppuccin', 'dark']];
+  const palettes = [['minarbot', 'dark'], ['minarbot', 'light'], ['catppuccin', 'dark']];
   const capture = async label => {
     for (const viewport of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }]) {
       await page.setViewportSize(viewport);
@@ -22,7 +22,7 @@ export async function streamActionsSmoke({ check, page, origin, screenshot, rele
       }
     }
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.evaluate(() => { document.documentElement.dataset.colorTheme = 'briefsip'; document.documentElement.dataset.theme = 'dark'; });
+    await page.evaluate(() => { document.documentElement.dataset.colorTheme = 'minarbot'; document.documentElement.dataset.theme = 'dark'; });
   };
   let agent, turn;
   await check('ST1 progressive reply, stable blocks, work log, follow and icon actions', async () => {
@@ -76,7 +76,7 @@ export async function streamActionsSmoke({ check, page, origin, screenshot, rele
     await visible(page.getByRole('region', { name: 'Inherited messages', exact: true }));
     await forkOrigin.getByRole('link', { name: 'Main chat', exact: true }).click(); await hidden(forkOrigin);
     await page.getByRole('button', { name: 'Back to latest messages', exact: true }).click();
-    for (const palette of ['briefsip', 'github', 'catppuccin', 'everforest', 'solarized', 'midnight']) for (const theme of ['dark', 'light']) {
+    for (const palette of ['minarbot', 'github', 'catppuccin', 'everforest', 'solarized', 'midnight']) for (const theme of ['dark', 'light']) {
       await page.evaluate(({ palette, theme }) => { document.documentElement.dataset.colorTheme = palette; document.documentElement.dataset.theme = theme; }, { palette, theme });
       assert.equal(await copy.evaluate(element => getComputedStyle(element).visibility), 'visible');
       assert(await turn.evaluate(element => element.scrollWidth <= element.clientWidth + 1), `${palette}/${theme} transcript overflow`);

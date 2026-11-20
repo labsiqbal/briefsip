@@ -54,11 +54,11 @@ export async function validateServer(input, fetchImpl = globalThis.fetch) {
   const environment = await request('/api/environment');
   if (environment.ok) {
     const data = JSON.parse(await responseText(environment));
-    if (!data || typeof data !== 'object' || !('id' in data || 'environmentId' in data || 'environment' in data)) throw new Error('Environment endpoint did not identify a Briefsip server.');
+    if (!data || typeof data !== 'object' || !('id' in data || 'environmentId' in data || 'environment' in data)) throw new Error('Environment endpoint did not identify a Minarbot server.');
   } else if (environment.status === 404) {
     await environment.body?.cancel();
     const root = await request('/');
-    if (!root.ok || !/text\/html/i.test(root.headers.get('content-type') ?? '') || !/<title>\s*Briefsip\s*<\/title>/i.test(await responseText(root))) throw new Error('URL did not return the Briefsip app.');
+    if (!root.ok || !/text\/html/i.test(root.headers.get('content-type') ?? '') || !/<title>\s*(?:Minarbot|Briefsip)\s*<\/title>/i.test(await responseText(root))) throw new Error('URL did not return the Minarbot app.');
   } else throw new Error(`Environment endpoint returned HTTP ${environment.status}. Check server access.`);
   return url.href;
 }

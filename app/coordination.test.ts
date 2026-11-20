@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { startApp } from './test-bridge.ts';
 
 test('coordination: durable delegation, transfer, cancellation, rejection and recovery', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-coordination-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-coordination-'));
   const calls: { model: string; task: string }[] = [];
   let allowPausedChild = false;
   let releaseSavedChild: (() => void) | undefined;

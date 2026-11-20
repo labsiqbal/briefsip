@@ -10,7 +10,7 @@ import { startApp } from './test-bridge.ts';
 
 // Exercise browser routes and real provider tool dispatch with synthetic files.
 test('conversation output updates, panel requests and owner deletion preserve reference identity', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-file-panel-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-file-panel-'));
   let target = '', invalid = false, filename = '';
   const removed: string[] = [];
   const provider = createServer(async (req, res) => {

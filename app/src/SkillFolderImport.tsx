@@ -23,7 +23,7 @@ export function SkillFolderImport({ disabled, onImport, onBusy, compact = false,
       if (input.length === 1 && !input[0].webkitRelativePath && input[0].name.endsWith('.json')) {
         if (texts[0].encoding) throw new Error('JSON exports must be UTF-8 text.');
         const bundle = JSON.parse(texts[0].content);
-        if (bundle?.format !== 'briefsip-skill-folder' || bundle.version !== 1 || Object.keys(bundle).some(key => !['format', 'version', 'files'].includes(key))) throw new Error('File is not a Briefsip version 1 skill folder export.');
+        if (bundle?.format !== 'minarbot-skill-folder' || bundle.version !== 1 || Object.keys(bundle).some(key => !['format', 'version', 'files'].includes(key))) throw new Error('File is not a Minarbot version 1 skill folder export.');
         files = bundle.files;
       }
       const parsed = parseSkillFiles(files);
@@ -36,10 +36,10 @@ export function SkillFolderImport({ disabled, onImport, onBusy, compact = false,
     <input ref={element => { if (element) { element.setAttribute('webkitdirectory', ''); (folderInput as { current: HTMLInputElement | null }).current = element; } }} type="file" multiple hidden onChange={event => { void read(event.target.files); event.target.value = ''; }} />
     <input ref={fileInput} type="file" accept=".md,.json,.zip" hidden onChange={event => { void read(event.target.files); event.target.value = ''; }} />
     <Button size="sm" variant="ghost" icon={<FolderUp size={14} aria-hidden />} disabled={disabled} busy={busy} onClick={() => folderInput.current?.click()} title="Folder containing SKILL.md and supporting files">Import folder</Button>
-    <Button size="sm" variant="ghost" icon={<FileUp size={14} aria-hidden />} disabled={disabled || busy} onClick={() => fileInput.current?.click()} title="SKILL.md, ZIP, or Briefsip JSON export">Import file</Button>
+    <Button size="sm" variant="ghost" icon={<FileUp size={14} aria-hidden />} disabled={disabled || busy} onClick={() => fileInput.current?.click()} title="SKILL.md, ZIP, or Minarbot JSON export">Import file</Button>
   </>;
   return <fieldset disabled={disabled || busy}><legend>Import skill folder</legend>
-    <p>Choose a folder containing SKILL.md and supporting files, a ZIP, or a Briefsip JSON export. Review all files before saving. The source folder is unchanged; scripts are not run.</p>
+    <p>Choose a folder containing SKILL.md and supporting files, a ZIP, or a Minarbot JSON export. Review all files before saving. The source folder is unchanged; scripts are not run.</p>
     <p className="muted">Up to 32 files, 48 KB of text and 2 MiB of binary assets. Assets are stored for export; agents do not run them or read them as text. The entire folder is rejected if any file is invalid.</p>
     <label>Folder<input type="file" multiple ref={element => { element?.setAttribute('webkitdirectory', ''); }} onChange={event => { void read(event.target.files); event.target.value = ''; }} /></label>
     <label>SKILL.md, ZIP, or JSON export<input type="file" accept=".md,.json,.zip" onChange={event => { void read(event.target.files); event.target.value = ''; }} /></label>
@@ -48,5 +48,5 @@ export function SkillFolderImport({ disabled, onImport, onBusy, compact = false,
 }
 
 export function downloadSkillFolder(files: SkillFile[], zip = false) {
-  downloadBlob(new Blob([zip ? writeSkillZip(files) : JSON.stringify({ format: 'briefsip-skill-folder', version: 1, files })], { type: zip ? 'application/zip' : 'application/json' }), zip ? `${parseSkillFiles(files).name}.zip` : 'briefsip-skill-folder.json');
+  downloadBlob(new Blob([zip ? writeSkillZip(files) : JSON.stringify({ format: 'minarbot-skill-folder', version: 1, files })], { type: zip ? 'application/zip' : 'application/json' }), zip ? `${parseSkillFiles(files).name}.zip` : 'minarbot-skill-folder.json');
 }

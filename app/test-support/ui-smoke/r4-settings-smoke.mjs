@@ -162,7 +162,7 @@ export async function r4SettingsSmoke({ check, page, origin, root, agentChat, se
           assert(counts[key] > before);
         }
         if (name === 'Skills') assert.equal(await dialog.getByRole('button', { name: 'Import', exact: true }).evaluate(el => el.lastElementChild?.tagName), 'svg');
-        if (name === 'External access') assert.equal(await dialog.getByText('Apps that can access Briefsip', { exact: true }).count(), 0);
+        if (name === 'External access') assert.equal(await dialog.getByText('Apps that can access Minarbot', { exact: true }).count(), 0);
         await focusRings(dialog); await shot(`R3-21-22-${key || name.toLowerCase().replace(' ', '-')}`);
         if (name === 'Skills') {
           await dialog.getByRole('tab', { name: 'Packs', exact: true }).click();

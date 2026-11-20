@@ -11,12 +11,12 @@ import { descriptorBody, deviceLinkBody, deviceProofBody } from './test-support/
 import { startApp } from './test-bridge.ts';
 
 test('signed device enrollment and heartbeat preserve challenge, key and session evidence', async t => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-device-evidence-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-device-evidence-'));
   const database = join(dir, 'canonical.sqlite'), now = Date.now();
   const jwt = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const auth = {
     secretKey: 'sk_test_fixture', publishableKey: 'pk_test_fixture',
-    issuer: 'https://fixture.clerk.accounts.dev', origin: 'https://briefsip.example',
+    issuer: 'https://fixture.clerk.accounts.dev', origin: 'https://minarbot.example',
     development: true, jwtKey: jwt.publicKey.export({ type: 'spki', format: 'pem' }).toString(),
   };
   const accountId = randomUUID(), sub = 'user_device_evidence', sid = 'sess_device_evidence';

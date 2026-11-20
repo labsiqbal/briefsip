@@ -10,7 +10,7 @@ import type { ProviderFamily } from './test-support/provider-endpoint.ts';
 
 for (const [source, target] of [['openai-compatible', 'openai-compatible'], ['openai-compatible', 'gemini'], ['anthropic', 'gemini'], ['gemini', 'openai-compatible'], ['gemini', 'anthropic'], ['openai-compatible', 'anthropic'], ['anthropic', 'openai-compatible']] as [ProviderFamily, ProviderFamily][]) {
   for (const scope of ['direct', 'channel', 'side']) test(`provider handoff ${source} to ${target} in ${scope} retains completed effects and question recovery`, async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'briefsip-handoff-'));
+    const dir = mkdtempSync(join(tmpdir(), 'minarbot-handoff-'));
     let phase = 'seed', initialCalls = 0;
     const payloads: any[] = [];
     const provider = createServer(async (req, res) => {

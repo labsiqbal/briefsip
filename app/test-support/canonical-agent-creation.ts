@@ -8,7 +8,7 @@ export function parseCanonicalAgentCreation(value: unknown) {
   const positive = (value: unknown) => { if (!Number.isSafeInteger(value) || Number(value) < 1) throw new Error('Invalid agent creation revision.'); return Number(value); };
   const requestId = identifier(d.requestId), agentId = identifier(d.id);
   if (requestId !== agentId || typeof d.backupModel !== 'string' || d.setup !== undefined && typeof d.setup !== 'boolean' || d.avatar !== undefined && (typeof d.avatar !== 'string' || !d.avatar || d.avatar.length > 699052)) throw new Error('Invalid agent creation data.');
-  const profile = parseAgentTemplate({ format: 'briefsip-agent', version: 1, name: d.name, role: d.role, model: d.model, backupModel: d.backupModel, instructions: d.instructions, toolBudget: d.toolBudget, threadLimit: d.threadLimit });
+  const profile = parseAgentTemplate({ format: 'minarbot-agent', version: 1, name: d.name, role: d.role, model: d.model, backupModel: d.backupModel, instructions: d.instructions, toolBudget: d.toolBudget, threadLimit: d.threadLimit });
   let providerBinding: null | { bindingId: string; expectedRevision: number } = null;
   if (d.providerBinding !== null) {
     if (!d.providerBinding || typeof d.providerBinding !== 'object' || Array.isArray(d.providerBinding)) throw new Error('Provider binding must be selected or null.');

@@ -10,7 +10,7 @@ import { startApp } from './test-bridge.ts';
 import { restoreWorkspace, workspaceSnapshot } from './test-support/backup.ts';
 
 test('restored incomplete workspace intent resumes with uncertainty without replaying the write', async () => {
-  const dir=mkdtempSync(join(tmpdir(),'briefsip-write-restore-')),root=join(dir,'old'),fresh=join(dir,'fresh');mkdirSync(root);mkdirSync(fresh);
+  const dir=mkdtempSync(join(tmpdir(),'minarbot-write-restore-')),root=join(dir,'old'),fresh=join(dir,'fresh');mkdirSync(root);mkdirSync(fresh);
   const agent=randomUUID(),turn=randomUUID(),payloads:any[]=[];
   const provider=createServer(async(req,res)=>{let raw='';for await(const chunk of req)raw+=chunk;payloads.push(JSON.parse(raw));res.end(JSON.stringify({choices:[{finish_reason:'stop',message:{content:'Inspect previous write before continuing.'}}]}));});
   await new Promise<void>(resolve=>provider.listen(0,'127.0.0.1',resolve));const address=provider.address();assert(address&&typeof address!=='string');
@@ -53,20 +53,20 @@ test('restored incomplete workspace intent resumes with uncertainty without repl
 
 for (const mode of ['file','directory','skill','delete','restore','replace']) test(`write grant creates ${mode} once through provider and result journal survives restart`, async () => {
   const directory = mode === 'directory', deleting = mode === 'delete', restoring = mode === 'restore', replacing = mode === 'replace', skill = randomUUID();
-  const dir=mkdtempSync(join(tmpdir(),'briefsip-workspace-write-http-')),root=join(dir,'root');mkdirSync(root);
+  const dir=mkdtempSync(join(tmpdir(),'minarbot-workspace-write-http-')),root=join(dir,'root');mkdirSync(root);
   if(replacing)writeFileSync(join(root,'made.txt'),'OLD');
   if(deleting)writeFileSync(join(root,'made.txt'),'RESULT');
   const recoveryInput=[...Array(8).fill('d'.repeat(250)), 'e'.repeat(38), 'f'].join('/');
   if(restoring){assert.equal(recoveryInput.length,2048);mkdirSync(join(root,recoveryInput,'..'),{recursive:true});writeFileSync(join(root,recoveryInput),'RESULT');}
   // Seed the on-disk recovery layout from an earlier removal.
-  const recoveryPath = join(recoveryInput, '..', '.briefsip-removed-' + randomUUID(), 'file');
+  const recoveryPath = join(recoveryInput, '..', '.minarbot-removed-' + randomUUID(), 'file');
   if (restoring) {
     assert(recoveryPath.length > 2048);
     mkdirSync(join(root, recoveryPath, '..'));
     renameSync(join(root, recoveryInput), join(root, recoveryPath));
   }
   const agent=randomUUID(),toolName=replacing?'replace_workspace_file':restoring?'restore_workspace_file':deleting?'delete_workspace_file':directory?'create_workspace_directory':mode==='skill'?'copy_skill_file':'create_workspace_file',args=replacing?{path:'made.txt',digest:createHash('sha256').update('OLD').digest('hex'),text:'RESULT'}:restoring?{path:'made.txt',recoveryPath:recoveryPath,digest:createHash('sha256').update('RESULT').digest('hex')}:deleting?{path:'made.txt',digest:createHash('sha256').update('RESULT').digest('hex')}:directory?{path:'made'}:mode==='skill'?{id:skill,source:'assets/raw.bin',path:'made.txt'}:{path:'made.txt',text:'RESULT'};let writeAdvertised=false,requests=0;
-  function checkEffect(){if(replacing){const recovery=readdirSync(root).filter(name=>name.startsWith('.briefsip-removed-'));assert.equal(recovery.length,1);assert.equal(readFileSync(join(root,recovery[0],'file'),'utf8'),'OLD');}if(restoring)assert.equal(readFileSync(join(root,recoveryPath),'utf8'),'RESULT');if(deleting){assert(!existsSync(join(root,'made.txt')));const recovery=readdirSync(root).filter(name=>name.startsWith('.briefsip-removed-'));assert.equal(recovery.length,1);assert.equal(readFileSync(join(root,recovery[0],'file'),'utf8'),'RESULT');}else if(directory)assert(lstatSync(join(root,'made')).isDirectory());else if(mode==='skill')assert.deepEqual(readFileSync(join(root,'made.txt')),Buffer.from([0,255,128,1]));else assert.equal(readFileSync(join(root,'made.txt'),'utf8'),'RESULT');}
+  function checkEffect(){if(replacing){const recovery=readdirSync(root).filter(name=>name.startsWith('.minarbot-removed-'));assert.equal(recovery.length,1);assert.equal(readFileSync(join(root,recovery[0],'file'),'utf8'),'OLD');}if(restoring)assert.equal(readFileSync(join(root,recoveryPath),'utf8'),'RESULT');if(deleting){assert(!existsSync(join(root,'made.txt')));const recovery=readdirSync(root).filter(name=>name.startsWith('.minarbot-removed-'));assert.equal(recovery.length,1);assert.equal(readFileSync(join(root,recovery[0],'file'),'utf8'),'RESULT');}else if(directory)assert(lstatSync(join(root,'made')).isDirectory());else if(mode==='skill')assert.deepEqual(readFileSync(join(root,'made.txt')),Buffer.from([0,255,128,1]));else assert.equal(readFileSync(join(root,'made.txt'),'utf8'),'RESULT');}
   const provider=createServer(async(req,res)=>{let raw='';for await(const chunk of req)raw+=chunk;const data=JSON.parse(raw);requests++;writeAdvertised=data.tools.some((tool:any)=>tool.function.name===toolName);const prior=data.messages.findLast((message:any)=>message.role==='tool');res.end(JSON.stringify({choices:[{finish_reason:prior?'stop':'tool_calls',message:prior?{content:prior.content}:{tool_calls:[{id:'create',type:'function',function:{name:toolName,arguments:JSON.stringify(args)}}]}}]}));});
   await new Promise<void>(resolve=>provider.listen(0,'127.0.0.1',resolve));const address=provider.address();assert(address&&typeof address!=='string');
   const options={database:join(dir,'db.sqlite'),baseURL:`http://127.0.0.1:${address.port}/v1`,workspaces:[{agent,directory:root,write:true}]};let app=await startApp(options, { directory: dir, servers: [provider] });
@@ -97,7 +97,7 @@ for (const mode of ['file','directory','skill','delete','restore','replace']) te
 });
 
 test('provider workspace writes reject malformed Unicode without changing bytes or path', async t => {
-  const dir = mkdtempSync(join(tmpdir(),'briefsip-workspace-unicode-')), root = join(dir,'root'); mkdirSync(root);
+  const dir = mkdtempSync(join(tmpdir(),'minarbot-workspace-unicode-')), root = join(dir,'root'); mkdirSync(root);
   const agent = randomUUID(); let args = { path: 'bad.txt', text: '\ud800' };
   const provider = createServer(async (req,res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;

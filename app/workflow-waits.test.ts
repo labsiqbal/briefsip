@@ -21,7 +21,7 @@ test('event wait validates bounded graph settings and preserves draft links', ()
 });
 
 test('signed workflow events are scoped, durable, once-only, expiring and cancel-safe', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-waits-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-waits-'));
   const calls: string[] = [];
   const provider = createServer(async (req, res) => { let raw = ''; for await (const chunk of req) raw += chunk; calls.push(raw); res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'Processed event.' } }] })); });
   await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve));

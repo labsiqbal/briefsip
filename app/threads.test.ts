@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { startApp } from './test-bridge.ts';
 
 test('side threads isolate queues, history, controls and archive recovery', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-threads-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-threads-'));
   const calls: { text: string; history: string[] }[] = [];
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
@@ -111,7 +111,7 @@ test('side threads isolate queues, history, controls and archive recovery', asyn
 });
 
 test('configured concurrency limits side threads and validates before opening storage', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-concurrency-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-concurrency-'));
   const calls: string[] = [];
   const provider = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;

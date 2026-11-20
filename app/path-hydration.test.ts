@@ -11,11 +11,11 @@ import { rustBinary } from './rust-binary.ts';
 const { freePort, stop } = await import(new URL('../scripts/production-env-gate.mjs', import.meta.url).href);
 
 for (const broken of [false, true]) test(broken ? 'broken login shell keeps service startup working' : 'service launch discovers Codex exported only by the login shell', { timeout: 20_000 }, async t => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-login-path-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-login-path-'));
   const bin = join(directory, 'bin'), shell = join(directory, 'login-shell');
   const inherited = join(directory, 'service-bin');
   const probes = join(directory, 'probes'), environment = join(directory, 'harness-env.json');
-  const binary = rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
+  const binary = rustBinary('minarbot-server', process.env.MINARBOT_RUST_BINARY);
   mkdirSync(bin);
   mkdirSync(inherited);
   writeFileSync(join(inherited, 'printenv'), '#!/bin/sh\n[ "$1" = PATH ] && printf "%s\\n" "$PATH"\n', { mode: 0o700 });
@@ -38,7 +38,7 @@ exec /bin/sh -c "$2"
   const port = await freePort();
   const origin = `http://127.0.0.1:${port}`;
   const child = spawn(binary, [], {
-    env: { HOME: directory, PATH: inherited, SHELL: shell, TMPDIR: directory, PORT: String(port), BRIEFSIP_DATA_DIR: directory, AMBIENT_SECRET: 'synthetic-secret', LANG: 'C', OPENAI_API_KEY: 'canary', COMPOSIO_API_KEY: 'canary', NODE_OPTIONS: '--trace-warnings', __MISE_DIFF: 'canary', JAVA_HOME: 'canary' },
+    env: { HOME: directory, PATH: inherited, SHELL: shell, TMPDIR: directory, PORT: String(port), MINARBOT_DATA_DIR: directory, AMBIENT_SECRET: 'synthetic-secret', LANG: 'C', OPENAI_API_KEY: 'canary', COMPOSIO_API_KEY: 'canary', NODE_OPTIONS: '--trace-warnings', __MISE_DIFF: 'canary', JAVA_HOME: 'canary' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const closed = new Promise(ready => child.once('close', ready));
@@ -49,7 +49,7 @@ exec /bin/sh -c "$2"
     const lines = createInterface({ input: child.stdout, signal: startup });
     let ready = false;
     for await (const line of lines) {
-      if (line === `Briefsip: ${origin}`) { ready = true; break; }
+      if (line === `Minarbot: ${origin}`) { ready = true; break; }
     }
     assert(ready, `Server did not report readiness. ${stderr}`);
     const response = await fetch(origin + '/api/environment', { signal: startup });
@@ -74,7 +74,7 @@ exec /bin/sh -c "$2"
     const childEnv = JSON.parse(readFileSync(environment, 'utf8'));
     assert.equal(childEnv.PATH, `${bin}:${inherited}`);
     assert.deepEqual(Object.keys(childEnv).sort(), ['HOME', 'LANG', 'PATH', 'TMPDIR']);
-    assert(childEnv.HOME.startsWith(join(directory, 'briefsip-probe-')));
+    assert(childEnv.HOME.startsWith(join(directory, 'minarbot-probe-')));
     assert.equal(childEnv.LANG, 'C');
     assert.equal(childEnv.TMPDIR, directory);
   } finally {
@@ -96,7 +96,7 @@ test('login shell candidates, PATH ordering, HOME fallback and capture scope', (
 });
 
 test('failed and hanging login probes preserve PATH with bounded process-tree cleanup', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-broken-shell-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-broken-shell-'));
   const broken = join(directory, 'broken'), hanging = join(directory, 'hanging');
   const working = join(directory, 'working'), noisy = join(directory, 'noisy');
   writeFileSync(broken, '#!/bin/sh\necho synthetic-secret >&2\nexit 7\n', { mode: 0o700 });

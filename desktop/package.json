@@ -1,8 +1,8 @@
 {
-  "name": "briefsip-desktop",
+  "name": "minarbot-desktop",
   "version": "0.10.3",
   "private": true,
-  "description": "Briefsip desktop client shell",
+  "description": "Minarbot desktop client shell",
   "type": "module",
   "main": "src/main.mjs",
   "scripts": {
@@ -18,8 +18,8 @@
     "electron": "44.10.1"
   },
   "build": {
-    "appId": "com.briefsip.desktop",
-    "productName": "Briefsip",
+    "appId": "com.minarbot.desktop",
+    "productName": "Minarbot",
     "asar": true,
     "files": [
       "src/**/*",
@@ -34,16 +34,16 @@
       ],
       "category": "Network",
       "icon": "assets/icon.png",
-      "executableName": "briefsip",
+      "executableName": "minarbot",
       "syncDesktopName": true
     },
     "publish": [
       {
         "provider": "generic",
-        "url": "https://github.com/labsiqbal/briefsip/releases/latest/download/"
+        "url": "https://github.com/minarbot/minarbot/releases/latest/download/"
       }
     ],
-    "artifactName": "Briefsip-${version}-${arch}.${ext}",
+    "artifactName": "Minarbot-${version}-${arch}.${ext}",
     "toolsets": {
       "appimage": "1.0.3"
     },
@@ -51,7 +51,7 @@
       "output": "dist"
     }
   },
-  "author": "Briefsip",
+  "author": "Minarbot",
   "license": "Apache-2.0 AND MIT",
-  "desktopName": "com.briefsip.desktop"
+  "desktopName": "com.minarbot.desktop"
 }

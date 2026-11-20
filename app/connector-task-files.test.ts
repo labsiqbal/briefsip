@@ -13,7 +13,7 @@ import { artifactReceiver, rustConnectorFixture, slackEnvelope, telegramUpdate, 
 
 for(const platform of ['slack','telegram'] as const)for(const mode of ['reply','notice','nested'])test(`${platform} ordinary chat collects only requested teammate files (${mode})`,async()=>{
  const expectsReply=mode!=='notice';
- const root=mkdtempSync(join(tmpdir(),'briefsip-task-files-')),owner=randomUUID(),worker=randomUUID(),leaf=randomUUID(),foreign=randomUUID(),bytes=Buffer.from('exact teammate bytes');
+ const root=mkdtempSync(join(tmpdir(),'minarbot-task-files-')),owner=randomUUID(),worker=randomUUID(),leaf=randomUUID(),foreign=randomUUID(),bytes=Buffer.from('exact teammate bytes');
  let db: DatabaseSync | undefined, sequence=0, partial=false;
  const uploads:Buffer[]=[];
  const provider=createServer(async(req,res)=>{

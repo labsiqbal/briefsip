@@ -19,7 +19,7 @@ const computerToolNames = [
 ];
 
 async function desktopFixture() {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-desktop-test-')), launches: { env: NodeJS.ProcessEnv; profile: string; child: ChildProcess }[] = [], commands: { args: string[]; env: NodeJS.ProcessEnv }[] = [];
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-desktop-test-')), launches: { env: NodeJS.ProcessEnv; profile: string; child: ChildProcess }[] = [], commands: { args: string[]; env: NodeJS.ProcessEnv }[] = [];
   const png = await sharp({ create: { width: 1280, height: 800, channels: 3, background: '#fff' } }).png().toBuffer();
   let now = 0, fail = false;
   const runtime = {
@@ -40,7 +40,7 @@ test('harness stdio MCP bridge delivers Computer images, input, scoped access an
   const app = await startApp({ database: join(f.dir, 'mcp.sqlite'), baseURL: 'http://127.0.0.1:1/v1', desktop: f.options, harness: { executables: { codex: binary } } });
   const clients: Client[] = [];
   const request = async (path: string, body?: unknown) => { const response = await fetch(app.origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: app.origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); const result = await response.json(); assert(response.ok, JSON.stringify(result)); return result; };
-  const connect = async (token: string) => { const client = new Client({ name: 'harness-computer-test', version: '1' }); clients.push(client); await client.connect(new StdioClientTransport({ command: process.execPath, args: [new URL('./t3/harness-mcp-bridge.mjs', import.meta.url).pathname], env: { BRIEFSIP_MCP_URL: app.origin + '/mcp', BRIEFSIP_MCP_TOKEN: token }, stderr: 'ignore' })); return client; };
+  const connect = async (token: string) => { const client = new Client({ name: 'harness-computer-test', version: '1' }); clients.push(client); await client.connect(new StdioClientTransport({ command: process.execPath, args: [new URL('./t3/harness-mcp-bridge.mjs', import.meta.url).pathname], env: { MINARBOT_MCP_URL: app.origin + '/mcp', MINARBOT_MCP_TOKEN: token }, stderr: 'ignore' })); return client; };
   try {
     await request('/api/agents', { id: agent, name: 'Default coder', model: 'fixture', instructions: 'Help.' });
     await request(`/api/agents/${agent}/computer`, { id: randomUUID(), revision: 0, enabled: true });
@@ -55,7 +55,7 @@ test('harness stdio MCP bridge delivers Computer images, input, scoped access an
     for (const [name, args] of [['computer_click', { x: 32, y: 64 }], ['computer_type', { text: 'Hello from MCP' }], ['computer_key', { keys: ['Control_L', 'a'] }], ['computer_scroll', { dx: 0, dy: 3 }], ['computer_open_url', { url: 'https://example.com' }]] as const) { const result = await client.callTool({ name, arguments: args }); assert(!result.isError, JSON.stringify(result)); }
     assert(f.commands.some(command => command.args.includes('Hello from MCP')));
     const limited = await connect(app.mcpServer.mintAgentSession({ agent, turn, ttlMs: 60000, scopes: ['computer:read'] }).token);
-    await assert.rejects(() => limited.callTool({ name: 'computer_click', arguments: { x: 1, y: 1 } }), /Briefsip MCP request failed/);
+    await assert.rejects(() => limited.callTool({ name: 'computer_click', arguments: { x: 1, y: 1 } }), /Minarbot MCP request failed/);
     const status = await request(`/api/agents/${agent}/computer`);
     await request(`/api/agents/${agent}/computer/control`, { operation: 'take', id: randomUUID(), revision: status.control.revision });
     const count = f.commands.length;

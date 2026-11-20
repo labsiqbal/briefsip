@@ -9,7 +9,7 @@ import { testDatabase } from './test-support/database.ts';
 import { startApp } from './test-bridge.ts';
 
 test('profile tool preserves authority, revision conflicts, execution snapshot and durable results', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-profile-tool-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-profile-tool-'));
   let args: unknown = {}, hold = false, continued = false, result: any, advertised = false, answerOnly = false;
   let before: (() => Promise<unknown>) | undefined;
   const systems: string[] = [];

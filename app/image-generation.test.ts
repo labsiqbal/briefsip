@@ -9,7 +9,7 @@ import { startApp } from './test-bridge.ts';
 
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZ84AAAAASUVORK5CYII=', 'base64');
 test('image generation preserves scope, uncertain receipts and exact artifacts through restart', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'briefsip-image-gen-'));
+  const dir = mkdtempSync(join(tmpdir(), 'minarbot-image-gen-'));
   let mode = 'ok', calls = 0, continuation = false, seenImage = false, release: (() => void) | undefined;
   const downloads = new Map<string, string>();
   const images = createServer(async (req, res) => {

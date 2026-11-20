@@ -1,6 +1,7 @@
+import { readProductStorage } from '../rename-storage.ts';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 
-export const notificationMuteKey = 'briefsip:workflow-notifications-muted';
+export const notificationMuteKey = 'minarbot:workflow-notifications-muted';
 
 export type TurnDestination = {
   agent: string;
@@ -44,11 +45,11 @@ export function requestKey(input: Pick<PendingInput, 'turn' | 'kind' | 'request'
   return `${input.kind}:${input.turn}:${input.request}`;
 }
 
-const deliveredKey = 'briefsip:needs-you-delivered';
+const deliveredKey = 'minarbot:needs-you-delivered';
 
 export function claimNotification(storage: Pick<Storage, 'getItem' | 'setItem'>, id: string) {
   try {
-    const saved: unknown = JSON.parse(storage.getItem(deliveredKey) ?? '[]');
+    const saved: unknown = JSON.parse(readProductStorage(storage, deliveredKey) ?? '[]');
     const ids = Array.isArray(saved) ? saved.filter((value): value is string => typeof value === 'string') : [];
     if (ids.includes(id)) return false;
     // ponytail: bounded browser history. Use server receipts if delivery spans devices.
@@ -80,8 +81,8 @@ export function useNeedsYouNotifications(onOpen: (target: TurnDestination, input
       for (const notice of notices) {
         if (before.has(notice.id)) continue;
         try {
-          if (localStorage.getItem(notificationMuteKey) === '1' || !claimNotification(localStorage, notice.id)) continue;
-          const notification = new Notification(notice.title, { body: 'Open Briefsip to view the conversation.', tag: `briefsip:${notice.id}` });
+          if (readProductStorage(localStorage, notificationMuteKey) === '1' || !claimNotification(localStorage, notice.id)) continue;
+          const notification = new Notification(notice.title, { body: 'Open Minarbot to view the conversation.', tag: `minarbot:${notice.id}` });
           notification.onclick = () => { window.focus(); open.current(notice.target, notice.input); notification.close(); };
         } catch { /* Browser permissions and storage can change while the app is open. */ }
       }

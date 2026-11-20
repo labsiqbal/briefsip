@@ -20,7 +20,7 @@ export async function desktopViewSmoke({ check, context, page, lead, visible, hi
     let popup;
     try {
       // Seed obsolete choices for every fixture agent. Saved choice cannot restore browser mode.
-      await page.evaluate(async () => { const { agents } = await (await fetch('/api/agents')).json(); for (const agent of agents) localStorage.setItem(`briefsip:computer-view:${agent.id}`, '"browser"'); });
+      await page.evaluate(async () => { const { agents } = await (await fetch('/api/agents')).json(); for (const agent of agents) localStorage.setItem(`minarbot:computer-view:${agent.id}`, '"browser"'); });
       await page.evaluate(() => window.dispatchEvent(new Event('focus')));
       await computerTab.click();
       const embedded = details.locator('.computer-viewer'); await visible(embedded.locator('canvas'));

@@ -42,9 +42,9 @@ test("native T3 contract keeps protocol and capability boundaries", () => {
 
 test("link helpers require local bootstrap subject and reject forwarded authority or widened scopes", () => {
   assert.equal(requestAbsoluteUrl(request()), "http://127.0.0.1/health");
-  assert.equal(canLinkHere(request(), "briefsip-local-bootstrap"), true);
-  assert.equal(canLinkHere(request({ "x-forwarded-host": "evil.test" }), "briefsip-local-bootstrap"), false);
-  assert.equal(canLinkHere(request({ "x-forwarded-proto": "https, http" }), "briefsip-local-bootstrap"), false);
+  assert.equal(canLinkHere(request(), "minarbot-local-bootstrap"), true);
+  assert.equal(canLinkHere(request({ "x-forwarded-host": "evil.test" }), "minarbot-local-bootstrap"), false);
+  assert.equal(canLinkHere(request({ "x-forwarded-proto": "https, http" }), "minarbot-local-bootstrap"), false);
   assert.equal(hasForwardedAuthorityHeaders(request({ "x-forwarded-host": " " })), false);
   assert.equal(requestAbsoluteUrl({ originalUrl: "/health", headers: { host: "localhost:3210, other.test" } }), "http://localhost:3210/health");
   assert.equal(requestAbsoluteUrl({ originalUrl: "http://[", headers: { host: "[" } }), null);

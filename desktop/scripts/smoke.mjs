@@ -14,8 +14,8 @@ const screenshotDir = path.resolve('.cache/verification');
 fs.mkdirSync(screenshotDir, { recursive: true });
 const appImage = path.resolve('dist', fs.readdirSync('dist').find((name) => name.endsWith('.AppImage')));
 const privateOrigin = 'https://desktop-check.invalid:4317';
-console.log('Starting isolated Briefsip server');
-const server = await startApp({ database: path.join(scratch, 'briefsip.sqlite'), port: 0, allowedOrigins: [privateOrigin] });
+console.log('Starting isolated Minarbot server');
+const server = await startApp({ database: path.join(scratch, 'minarbot.sqlite'), port: 0, allowedOrigins: [privateOrigin] });
 let child;
 let socket;
 let closeBrowser = () => {};
@@ -77,15 +77,15 @@ try {
     fs.writeFileSync(path.join(screenshotDir, name), Buffer.from(response.result.data, 'base64'));
   }
   await waitFor(() => evaluate('document.querySelector("button")?.textContent === "Connect"'));
-  assert.deepEqual(await evaluate('Object.keys(window.briefsipDesktop).sort()'), ['appVersion', 'checkForUpdates', 'openExternal']);
+  assert.deepEqual(await evaluate('Object.keys(window.minarbotDesktop).sort()'), ['appVersion', 'checkForUpdates', 'openExternal']);
   assert.equal(await evaluate('typeof require'), 'undefined');
   await screenshot('connect.png');
   await evaluate('document.querySelector("input").value="http://example.invalid"; document.querySelector("form").requestSubmit()');
   await waitFor(() => evaluate('document.querySelector("#error")?.textContent.includes("Use HTTPS")'));
   await evaluate(`document.querySelector('input').value=${JSON.stringify(server.origin)}; document.querySelector('form').requestSubmit()`);
   await waitFor(() => evaluate(`location.origin===${JSON.stringify(server.origin)} && document.querySelector('#root')?.childElementCount > 0`));
-  const result = await evaluate(`(async () => ({ title: document.title, origin: location.origin, bridge: Object.keys(window.briefsipDesktop).sort(), node: typeof require, agentsStatus: (await fetch('/api/agents')).status, cspNonce: !!document.querySelector('meta[name="csp-nonce"]')?.content, visibleText: document.body.innerText.slice(0, 300) }))()`);
-  assert.equal(result.title, 'Briefsip'); assert.equal(result.agentsStatus, 200); assert.equal(result.node, 'undefined'); assert.equal(result.cspNonce, true);
+  const result = await evaluate(`(async () => ({ title: document.title, origin: location.origin, bridge: Object.keys(window.minarbotDesktop).sort(), node: typeof require, agentsStatus: (await fetch('/api/agents')).status, cspNonce: !!document.querySelector('meta[name="csp-nonce"]')?.content, visibleText: document.body.innerText.slice(0, 300) }))()`);
+  assert.equal(result.title, 'Minarbot'); assert.equal(result.agentsStatus, 200); assert.equal(result.node, 'undefined'); assert.equal(result.cspNonce, true);
   const writeStatus = await evaluate(`fetch('/api/agents', {method:'POST',headers:{'content-type':'application/json'},body:'{}'}).then(response => response.status)`);
   assert.equal(writeStatus, 400); // same-origin write admission reached payload validation
   await screenshot('app.png');
@@ -113,5 +113,5 @@ try {
   await server.close();
   fs.closeSync(scratchFd);
   await fs.promises.rm(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-  console.log('Cleanup complete: AppImage and isolated Briefsip server stopped.');
+  console.log('Cleanup complete: AppImage and isolated Minarbot server stopped.');
 }

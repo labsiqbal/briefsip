@@ -1,3 +1,4 @@
+import { productEnv } from '../desktop/src/rename-env.mjs';
 import { rustHubFacade } from './rust-hub-test-bridge.ts';
 import type { HubLinkOptions } from './rust-hub-test-bridge.ts';
 import { connectorsTestBridge } from './rust-connectors-test-bridge.ts';
@@ -16,11 +17,11 @@ import { fixPath } from './t3/path.ts';
 type Config = { pdfFault?: PdfFault; testPathPrefix?: string; testCanonicalBridge?: { origin: string; token: string; clerk: boolean; mail: boolean; webhook: boolean }; hubLink?: HubLinkOptions; composio?: { baseURL?: string; timeout?: number }; mailApiKey?: string; mailEndpoint?: string; scriptDirectory?: string; agentLimits?: unknown; imageProvider?: unknown; transcriptionProvider?: unknown; scriptToken?: string; installationId?: string; mailFrom?: string; mailOrigin?: string; testKeyring?: Record<string, string>; testKeyringLocked?: boolean; updates?: { releasesDir?: string; launcherSocket?: string; testReleaseBaseUrl?: string; testReleasePublicKey?: string }; desktop?: DesktopOptions; peerTokenIssuer?: PeerTokenIssuer; machines?: { now?: () => number; healthIntervalMs?: number }; baseURL?: string; apiKey?: string; defaultModel?: string; provider?: string; accounts?: unknown; timeout?: number; concurrency?: number; workspaces?: unknown; projectRoot?: string; harness?: { issuer?: AgentSessionIssuer; executables?: Partial<Record<import('./shared/runtime.ts').HarnessRuntime, string>>; mcpURL?: string }; stream?: boolean; streamTermination?: string; maxTokens?: number; database: string; port?: number; host?: string; tls?: { cert: string; key: string }; allowedOrigins?: string[]; dist?: string; auth?: { secretKey: string; publishableKey: string; issuer: string; origin: string; development?: boolean; audience?: string; jwtKey?: string; apiUrl?: string }; fixedClock?: number };
 export async function startRustServer(options: Config, attempt = 0): Promise<{ origin: string; close: () => Promise<void>; crash: () => Promise<void>; refreshMachines: () => Promise<void>; mcpServer: ReturnType<typeof rustMcpFacade>; hubLink?: ReturnType<typeof rustHubFacade> }> {
   await fixPath();
-  if (options.concurrency !== undefined && (!Number.isSafeInteger(options.concurrency) || options.concurrency < 1 || options.concurrency > 32)) throw new Error('BRIEFSIP_CONCURRENCY must be 1..32');
+  if (options.concurrency !== undefined && (!Number.isSafeInteger(options.concurrency) || options.concurrency < 1 || options.concurrency > 32)) throw new Error('MINARBOT_CONCURRENCY must be 1..32');
   const supported = new Set(['pdfFault', 'testPathPrefix', 'testCanonicalBridge', 'hubLink', 'composio', 'mailApiKey', 'mailEndpoint', 'agentLimits', 'imageProvider', 'transcriptionProvider', 'scriptToken', 'scriptDirectory', 'installationId', 'mailFrom', 'mailOrigin', 'testKeyring', 'testKeyringLocked', 'updates', 'desktop', 'peerTokenIssuer', 'machines', 'database', 'port', 'host', 'tls', 'allowedOrigins', 'dist', 'auth', 'fixedClock', 'baseURL', 'apiKey', 'defaultModel', 'provider', 'accounts', 'timeout', 'concurrency', 'workspaces', 'projectRoot', 'harness', 'stream', 'streamTermination', 'maxTokens']);
   for (const key of Object.keys(options)) if (!supported.has(key)) throw new Error(`not ported: option ${key}`);
   for (const key of Object.keys(options.hubLink ?? {})) if (!['origin', 'hubSigningPublicKey', 'development', 'entry', 'fetch', 'webSocket', 'reconnectMs', 'now'].includes(key)) throw new Error(`not ported: option hubLink.${key}`);
-  const binary = rustBinary('briefsip-server', process.env.BRIEFSIP_RUST_BINARY);
+  const binary = rustBinary('minarbot-server', productEnv('MINARBOT_RUST_BINARY'));
   const bridge = await computerTestBridge(options);
   const connectors = await connectorsTestBridge(options).catch(async error => { await bridge.close(); throw error; });
   const pdfBridge = await pdfTestBridge(options.pdfFault);
@@ -29,7 +30,7 @@ export async function startRustServer(options: Config, attempt = 0): Promise<{ o
   let config: string;
   try { config = JSON.stringify({ ...serializable, hubLink: options.hubLink ? { origin: options.hubLink.origin, hubSigningPublicKey: options.hubLink.hubSigningPublicKey, development: options.hubLink.development, reconnectMs: options.hubLink.reconnectMs } : undefined, harness: options.harness ? { ...options.harness, issuer: undefined } : undefined, testHarnessBridge: harnessBridge.config, testPdfBridge: pdfBridge.config, desktop: desktop ? { ...desktop, runtime: undefined, now: undefined, testRuntime: !!desktop.runtime } : undefined, machines: machines ? { healthIntervalMs: machines.healthIntervalMs } : undefined, testConnectorBridge: connectors.config, testComputerBridge: bridge.config }, (key, value) => { if (typeof value === 'function') throw new Error(`not ported: function option ${key}`); return value; }); } catch (error) { await bridge.close(); await connectors.close(); await harnessBridge.close(); await pdfBridge.close(); throw error; }
   const root = fileURLToPath(new URL('../', import.meta.url));
-  const child = spawn(binary, ['--test-config'], { cwd: root, env: { ...process.env, ...(testPathPrefix ? { PATH: testPathPrefix + ':' + process.env.PATH } : {}), BRIEFSIP_TEST_SERVER: 'rust', BRIEFSIP_TEST_PARENT: String(process.pid) }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(binary, ['--test-config'], { cwd: root, env: { ...process.env, ...(testPathPrefix ? { PATH: testPathPrefix + ':' + process.env.PATH } : {}), MINARBOT_TEST_SERVER: 'rust', MINARBOT_TEST_PARENT: String(process.pid) }, stdio: ['pipe', 'pipe', 'pipe'] });
   const exited = new Promise<void>(closed => child.once('close', () => closed()));
   let stderr = '', stdout = '';
   child.stderr.setEncoding('utf8'); child.stderr.on('data', value => { stderr = (stderr + value).slice(-8192); });
@@ -59,7 +60,7 @@ export async function startRustServer(options: Config, attempt = 0): Promise<{ o
       });
       child.stdout.on('data', value => {
         stdout = (stdout + value).slice(-8192);
-        const match = /^Briefsip: (https?:\/\/[^\r\n]+)\r?\n/m.exec(stdout);
+        const match = /^Minarbot: (https?:\/\/[^\r\n]+)\r?\n/m.exec(stdout);
         if (match) { clearTimeout(timeout); ready(match[1]); }
       });
     });

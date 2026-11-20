@@ -1,4 +1,4 @@
-# Briefsip
+# Minarbot
 
 ## App
 
@@ -19,7 +19,7 @@ From the repository root, run `cargo build --workspace` and `cargo test --worksp
 Check formatting with `cargo fmt --check`.
 Run `cargo clippy --workspace --all-targets -- -D warnings`.
 Rust tests return `Result` and propagate errors with `?`. Avoid `unwrap` and `expect`.
-On shared hosts, run Cargo and heavy test commands through `briefsip-cargo-slot.sh`.
+On shared hosts, run Cargo and heavy test commands through `~/.cache/briefsip-cargo-slot.sh`.
 
 ## Issues
 

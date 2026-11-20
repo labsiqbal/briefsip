@@ -77,19 +77,19 @@ async function fixture(stream = false) {
 }
 
 test('startup failure reports child output and releases the provider and directory', async t => {
-  const directory = mkdtempSync(join(tmpdir(), 'briefsip-startup-failure-'));
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-startup-failure-'));
   const binary = join(directory, 'failing-server');
   writeFileSync(binary, '#!/bin/sh\nprintf "fixture stdout\\n"\nprintf "fixture stderr\\n" >&2\nexit 17\n', { mode: 0o700 });
   const provider = createServer();
   await new Promise<void>((resolve, reject) => provider.once('error', reject).listen(0, '127.0.0.1', resolve));
-  const original = process.env.BRIEFSIP_RUST_BINARY;
+  const original = process.env.MINARBOT_RUST_BINARY;
   t.after(async () => {
-    if (original === undefined) delete process.env.BRIEFSIP_RUST_BINARY;
-    else process.env.BRIEFSIP_RUST_BINARY = original;
+    if (original === undefined) delete process.env.MINARBOT_RUST_BINARY;
+    else process.env.MINARBOT_RUST_BINARY = original;
     if (provider.listening) await new Promise<void>(resolve => provider.close(() => resolve()));
     rmSync(directory, { recursive: true, force: true });
   });
-  process.env.BRIEFSIP_RUST_BINARY = binary;
+  process.env.MINARBOT_RUST_BINARY = binary;
   await assert.rejects(startApp({ database: join(directory, 'state.sqlite') }, { directory, servers: [provider] }),
     /exited \(17\)\.[\s\S]*stdout tail:\nfixture stdout\nstderr tail:\nfixture stderr/);
   assert.equal(provider.listening, false);

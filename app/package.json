@@ -1,6 +1,6 @@
 {
-  "name": "briefsip",
-  "version": "0.13.13",
+  "name": "minarbot",
+  "version": "0.14.0",
   "private": true,
   "type": "module",
   "license": "Apache-2.0",
@@ -12,8 +12,8 @@
     "hub": "node --experimental-strip-types hub/server.ts",
     "test": "node scripts/test.mjs",
     "test:phase-0": "node t3/provenance-check.mjs --phase --receipt t3/phase-0.json",
-    "cli": "sh scripts/briefsip-command.sh script",
-    "skills": "sh scripts/briefsip-command.sh skills",
+    "cli": "sh scripts/minarbot-command.sh script",
+    "skills": "sh scripts/minarbot-command.sh skills",
     "lint": "eslint . --max-warnings 0 && node lint/check.mjs && node lint/markdown-paths.mjs"
   },
   "dependencies": {

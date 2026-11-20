@@ -9,11 +9,11 @@ export function nativeReleaseFixture(directory: string, version: string, mode = 
   const key = JSON.stringify([version, mode]);
   let binary = binaries.get(key);
   if (!binary) {
-    binary = join(mkdtempSync(join(tmpdir(), 'briefsip-native-fixture-')), 'server');
-    execFileSync('rustc', [new URL('../../crates/briefsip-launcher/tests/fixtures/contract.rs', import.meta.url).pathname, '-O', '-o', binary], { env: { ...process.env, BRIEFSIP_FIXTURE_VERSION: version, BRIEFSIP_FIXTURE_MODE: mode } });
+    binary = join(mkdtempSync(join(tmpdir(), 'minarbot-native-fixture-')), 'server');
+    execFileSync('rustc', [new URL('../../crates/minarbot-launcher/tests/fixtures/contract.rs', import.meta.url).pathname, '-O', '-o', binary], { env: { ...process.env, MINARBOT_FIXTURE_VERSION: version, MINARBOT_FIXTURE_MODE: mode } });
     binaries.set(key, binary);
   }
   mkdirSync(join(directory, 'bin'), { recursive: true });
-  cpSync(binary, join(directory, 'bin/briefsip-server'));
-  chmodSync(join(directory, 'bin/briefsip-server'), 0o700);
+  cpSync(binary, join(directory, 'bin/minarbot-server'));
+  chmodSync(join(directory, 'bin/minarbot-server'), 0o700);
 }

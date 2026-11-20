@@ -13,7 +13,7 @@ import { rustConnectorFixture, slackEnvelope, telegramUpdate, waitFor } from './
 
 
 test('Telegram sends exact generated artifacts, retains uncertain delivery and rechecks grant before recovery',async()=>{
- const root=mkdtempSync(join(tmpdir(),'briefsip-telegram-output-')),agent=randomUUID(),text='<h1>Exact generated output</h1>\n';
+ const root=mkdtempSync(join(tmpdir(),'minarbot-telegram-output-')),agent=randomUUID(),text='<h1>Exact generated output</h1>\n';
  let calls=0,lost=true,sequence=0,question=false;const deliveries:any[]=[],messages:any[]=[];
  const provider=createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;const data=JSON.parse(raw);calls++;const tools=data.messages.flatMap((m:any)=>m.tool_calls??[]);let call:any;
   if(!tools.length)call={name:'create_text_file',arguments:JSON.stringify({name:'result.html',text})};else if(question&&!tools.some((c:any)=>c.function.name==='ask_user'))call={name:'ask_user',arguments:JSON.stringify({question:'Continue?',choices:['Yes','No']})};
