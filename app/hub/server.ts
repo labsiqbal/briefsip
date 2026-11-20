@@ -1,4 +1,4 @@
-import { productEnv } from '../../desktop/src/rename-env.mjs';
+import { productEnv } from '../t3/rename-env.mjs';
 import { createPrivateKey } from 'node:crypto';
 import { hubAssets, hubDocument, createHubWebApi } from './web.ts';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
