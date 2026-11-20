@@ -12,6 +12,18 @@ const OLD_UNIT: &str = "briefsip.service";
 const UNIT: &str = "minarbot.service";
 const MARKER: &str = ".minarbot-rename-v1";
 
+pub fn checkpoint_id(reference: &str) -> Option<&str> {
+    reference
+        .strip_prefix("refs/minarbot/checkpoints/")
+        .or_else(|| reference.strip_prefix("refs/briefsip/checkpoints/"))
+}
+
+pub fn workspace_recovery_id(directory: &str) -> Option<&str> {
+    directory
+        .strip_prefix(".minarbot-removed-")
+        .or_else(|| directory.strip_prefix(".briefsip-removed-"))
+}
+
 fn boxed(error: Box<dyn std::error::Error>) -> Box<dyn std::error::Error + Send + Sync> {
     error.to_string().into()
 }
@@ -47,6 +59,11 @@ impl Layout {
     }
 
     fn migrate(&self, checkpoint: impl Fn(&str) -> Result<()>) -> Result<()> {
+        let _lease = files::lease(
+            &self.home.join(".local/share/.minarbot-rename-lock.sqlite"),
+            "Another process is migrating the installation.",
+        )
+        .map_err(boxed)?;
         for (old, new, phase) in [
             (&self.legacy_share, &self.share, "data-root"),
             (&self.legacy_config, &self.config, "config-root"),

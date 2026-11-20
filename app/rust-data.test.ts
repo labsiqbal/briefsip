@@ -100,7 +100,7 @@ test('Rust deletion rolls back FK closure, preserves room history and retries ex
     mkdirSync(desktop, { recursive: true }); writeFileSync(join(desktop, 'saved'), 'saved'); mkdirSync(workspace);
     execFileSync('git', ['init', '-q', workspace]);
     execFileSync('git', ['-C', workspace, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'Fixture', '--allow-empty']);
-    const hash = execFileSync('git', ['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), ref = `refs/minarbot/checkpoints/${direct}`;
+    const hash = execFileSync('git', ['-C', workspace, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), ref = `refs/briefsip/checkpoints/${direct}`;
     execFileSync('git', ['-C', workspace, 'update-ref', ref, hash]);
     for (const id of [agent, other]) db.prepare("INSERT INTO agents(id,name,model,instructions) VALUES(?,'Fixture','fixture','Help')").run(id);
     db.prepare("INSERT INTO channels(id,name,instructions,lead) VALUES(?,'Room','Help',?)").run(channel, agent);
@@ -199,7 +199,7 @@ Help`, files: [] } };
       const changed = await send(agentPath + '/' + kind, 'PUT', change);
       assert.equal(changed.status, 200, JSON.stringify(changed));
       assert.deepEqual(changed.body.data, { projectId: second, agentId: aid, ...fields, revision });
-      assert.equal(changed.body.receipt.payloadDigest, digestCommand([`minarbot-agent-${kind}-v1`, second, aid, change]));
+      assert.equal(changed.body.receipt.payloadDigest, digestCommand([`briefsip-agent-${kind}-v1`, second, aid, change]));
     }
     const collaborator = f.addAccount('user_member').accountId;
     db.prepare("INSERT INTO project_members VALUES(?,?,'member',1,0)").run(project, collaborator);

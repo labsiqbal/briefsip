@@ -208,7 +208,6 @@ pub fn migrate_database(data: &Path) -> Result<()> {
     {
         return Ok(());
     }
-    files::private_file(&old)?;
     let _old_guard = files::lease(
         &data.join(format!("{LEGACY_DATABASE}.server-lock.sqlite")),
         "Legacy database is in use.",
@@ -217,6 +216,10 @@ pub fn migrate_database(data: &Path) -> Result<()> {
         &data.join(format!("{DATABASE}.server-lock.sqlite")),
         "Minarbot database is in use.",
     )?;
+    if link_is(&old, OsStr::new(DATABASE)) && new.is_file() {
+        return Ok(());
+    }
+    files::private_file(&old)?;
     let marker = data.join(DATABASE_MARKER);
     let restored = metadata(&new)?.is_some_and(|metadata| metadata.is_file());
     if restored && !marker.is_file() {

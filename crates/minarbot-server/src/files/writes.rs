@@ -201,7 +201,8 @@ fn restore(root: &Path, args: &Value) -> Result<Value> {
     if parts.last() != Some(&"file")
         || !parts
             .get(parts.len().saturating_sub(2))
-            .is_some_and(|p| p.strip_prefix(".minarbot-removed-").is_some_and(valid_id))
+            .and_then(|directory| crate::rename_migration::workspace_recovery_id(directory))
+            .is_some_and(valid_id)
     {
         return Err(error(400, "Invalid workspace recovery path"));
     }
@@ -553,6 +554,24 @@ mod tests {
                 assert_eq!(fs::read(&path)?, b"OLD");
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn restores_workspace_file_from_legacy_recovery_directory() -> crate::db::Result<()> {
+        let scratch = Scratch::new()?;
+        let root = scratch.0.join("workspace");
+        let directory = format!(".briefsip-removed-{}", uuid::Uuid::new_v4());
+        let source = format!("{directory}/file");
+        fs::create_dir(root.join(directory))?;
+        fs::write(root.join(&source), b"KEEP")?;
+        restore(
+            &root,
+            &json!({"path":"restored","recoveryPath":source,"digest":format!("{:x}", Sha256::digest(b"KEEP"))}),
+        )
+        .map_err(|error| error.message)?;
+        assert_eq!(fs::read(root.join("restored"))?, b"KEEP");
+        assert_eq!(fs::read(root.join(source))?, b"KEEP");
         Ok(())
     }
 
