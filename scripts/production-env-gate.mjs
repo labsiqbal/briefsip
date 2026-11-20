@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -20,13 +19,7 @@ export function newestSnapshot() {
   return files[0];
 }
 
-export async function freePort() {
-  const socket = createServer();
-  await new Promise((ready, reject) => { socket.once('error', reject); socket.listen(0, '127.0.0.1', ready); });
-  const port = socket.address().port;
-  await new Promise(ready => socket.close(ready));
-  return [4317, 4318].includes(port) ? freePort() : port;
-}
+export { freePort } from './test-port.mjs';
 
 export async function stop(child, closed) {
   if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');

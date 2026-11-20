@@ -49,6 +49,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if response.contains("\"committed\":true") { committed = quote(&id); }
         }
         let variables = env::vars().filter(|(k, _)| k.starts_with("LAUNCHER_") || matches!(k.as_str(), "PORT" | "MINARBOT_DATA_DIR" | "MINARBOT_UPDATE_TRIAL")).map(|(k,v)| format!("{}:{}",quote(&k),quote(&v))).collect::<Vec<_>>().join(",");
+        // A real server that restarted into this release answers a sender's late apply poll
+        // with the launcher's attempt ID, which is the receipt ID of the peer request.
+        if request.starts_with(b"POST /api/peer/updates/apply ") {
+            if let Ok(id) = env::var("MINARBOT_UPDATE_TRIAL") {
+                let body = format!("{{\"accepted\":true,\"id\":{}}}", quote(&id));
+                write!(connection, "HTTP/1.1 202 Accepted\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body)?;
+                continue;
+            }
+        }
         let body = format!("{{\"version\":{},\"native\":true,\"connected\":true,\"committed\":{committed},\"env\":{{{variables}}}}}", quote(if mode == "wrong" { "0.0.0" } else { version }));
         write!(connection, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{:x}\r\n{}\r\n0\r\n\r\n", body.len(), body)?;
     }

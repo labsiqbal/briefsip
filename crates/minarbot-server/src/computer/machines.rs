@@ -1167,7 +1167,7 @@ pub async fn update_remote(
         Some(body) if status["peerApplyPolling"] == true => {
             let mut body = body.clone();
             body["poll"] = json!(true);
-            poll_update(s, origin, &token, &body, progress).await?
+            poll_update(s, origin, &token, &body, bytes, progress).await?
         }
         Some(body) => {
             let deadline = s
@@ -1210,6 +1210,7 @@ async fn poll_update(
     origin: &str,
     token: &str,
     body: &Value,
+    total: u64,
     progress: impl Fn(u64) -> Result<()>,
 ) -> Result<Value> {
     let client = peer_client()?;
@@ -1233,9 +1234,9 @@ async fn poll_update(
             Ok(value)
                 if value["accepted"] == true && crate::web::id(text(&value, "id")).is_some() =>
             {
-                if let Some(bytes) = value["bytesTransferred"].as_u64() {
-                    progress(bytes)?;
-                }
+                // A receiver that restarted into the new release confirms the attempt
+                // without a byte count. Its launcher only applies a complete, verified archive.
+                progress(value["bytesTransferred"].as_u64().unwrap_or(total))?;
                 return Ok(value);
             }
             Err(failure) if failure.code != PeerError::Unconfirmed.code() => return Err(failure),

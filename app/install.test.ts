@@ -10,8 +10,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { startApp } from './test-bridge.ts';
 // @ts-expect-error Plain Node release tooling.
 import { buildRelease } from '../scripts/release.mjs';
-import { createServer } from 'node:net';
 import { createServer as httpServer } from 'node:http';
+import { freePort } from '../scripts/test-port.mjs';
 const exec = promisify(execFile), root = new URL('../',import.meta.url).pathname;
 const temp = () => mkdtempSync(join(tmpdir(),'minarbot-install-'));
 let testIsolation: string, originalHome: string | undefined, originalPath: string | undefined;
@@ -32,7 +32,6 @@ function fixture(dir:string) {
   writeFileSync(join(source,'package.json'),JSON.stringify({version:'1.0.0',type:'module'}));writeFileSync(join(source,'server.ts'),'// fixture runtime');
   const info=buildRelease({source,releases,allowDirty:true,build:false,install:false});return {releases,info};
 }
-async function freePort() {const s=createServer();await new Promise<void>(r=>s.listen(0,'127.0.0.1',r));const port=(s.address() as {port:number}).port;await new Promise<void>(r=>s.close(()=>r()));return port;}
 
 test('install credentials are hashed, expire after 30 minutes, issue one code atomically and never authorize other APIs',async()=>{
  const dir=temp(),{releases}=fixture(dir);let now=Date.now(), app=await startApp({database:join(dir,'db'),updates:{releasesDir:releases},machines:{now:()=>now}}); const logs:string[]=[];

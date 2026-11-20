@@ -30,21 +30,12 @@ export const retainedToolNames = [
   'task_status', 'transfer_task', 'wait_for_event', 'wait_task',
 ].sort();
 
-import { createServer } from 'node:net';
 import { canonicalTestBridge, type CanonicalFixtures } from './rust-canonical-test-bridge.ts';
+import { freePort } from '../scripts/test-port.mjs';
 
 type RustServerOptions = Parameters<typeof startRustServer>[0];
 type CanonicalOptions = RustServerOptions & CanonicalFixtures & { syncKey?: () => Uint8Array };
 
-async function freePort(): Promise<number> {
-  const listener = createServer();
-  await new Promise<void>((resolve, reject) => listener.listen(0, '127.0.0.1', () => resolve()).once('error', reject));
-  const address = listener.address();
-  if (!address || typeof address === 'string') throw new Error('Failed to reserve canonical test port');
-  const port = address.port;
-  await new Promise<void>((resolve, reject) => listener.close(error => error ? reject(error) : resolve()));
-  return port;
-}
 
 /** Starts canonical-mode Rust with serializable Clerk, hub, executor, and sync options. */
 export async function startCanonicalApp(options: CanonicalOptions, portRetries = 0): ReturnType<typeof startRustServer> {

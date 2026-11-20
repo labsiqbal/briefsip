@@ -17,12 +17,12 @@ import { launcherRequest } from './rust-launcher-test.ts';
 import { launcherCommand } from './rust-test-launcher.ts';
 import { durableWrite, fileManifest, latestRelease, selectRelease, selectedRelease, verifyRelease } from '../scripts/release-lib.mjs';
 import { receiveRelease, releaseArchive } from './rust-update-test.ts';
+import { freePort } from '../scripts/test-port.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const { buildRelease } = await import(new URL('../scripts/release.mjs', import.meta.url).href);
 const delay = (ms: number) => new Promise(r=>setTimeout(r,ms));
 const temp = () => mkdtempSync(join(tmpdir(),'updates-'));
 async function until<T>(read:()=>Promise<T|undefined|false>, timeout=15000):Promise<T> { const deadline=Date.now()+timeout; while(Date.now()<deadline){const result=await read();if(result)return result;await delay(80);}throw new Error('Update test timed out.'); }
-async function freePort() { const s=httpServer(); await new Promise<void>(r=>s.listen(0,'127.0.0.1',r)); const addr=s.address();assert(addr&&typeof addr!=='string');const p=addr.port;await new Promise<void>(r=>s.close(()=>r()));return p; }
 function fixture(source:string, version:string, mode='healthy') {
   mkdirSync(join(source,'dist'),{recursive:true}); writeFileSync(join(source,'dist/index.html'),'<title>Minarbot fixture</title>');
   writeFileSync(join(source,'package.json'),JSON.stringify({name:'fixture',version,type:'module'}));

@@ -174,3 +174,13 @@ for (const crate of readdirSync(crates, { withFileTypes: true }).filter(entry =>
       relative + ' must use rename_migration::sidecar for database companions');
   }
 }
+
+// A port taken from listen(0) and released is in the kernel's ephemeral range, where another
+// test can be handed it before our server binds or while a launcher restarts it.
+const portHelpers = [];
+for (const directory of [root, resolve(root, 'test-support'), resolve(root, '../scripts')]) {
+  for (const name of readdirSync(directory).filter(name => /\.(?:ts|mts|mjs)$/.test(name) && !name.endsWith('.d.mts'))) {
+    if (/\bfunction\s+freePort\b|\bfreePort\s*=\s*(?:async\s*)?\(/.test(readFileSync(resolve(directory, name), 'utf8'))) portHelpers.push(name);
+  }
+}
+assert.deepEqual(portHelpers, ['test-port.mjs'], 'Reserve test ports with freePort from scripts/test-port.mjs.');

@@ -13,6 +13,7 @@ import { rustBinary } from './rust-binary.ts';
 import { launcherCommand } from './rust-test-launcher.ts';
 import { startApp } from './test-bridge.ts';
 import { nativeReleaseFixture } from './test-support/native-release-fixture.ts';
+import { freePort } from '../scripts/test-port.mjs';
 
 const base = '/minarbot/minarbot/releases';
 const created = '2026-11-19T09:00:00.000Z';
@@ -132,9 +133,8 @@ async function until<T>(probe: () => Promise<T | undefined>): Promise<T> {
 async function managed(t: TestContext, path: string, updates: object = {}) {
   const data = join(path, 'data'), releases = join(path, 'releases');
   mkdirSync(data, { recursive: true, mode: 0o700 });
-  const probe = await listen(t);
-  const port = Number(new URL(probe.origin).port);
-  await probe.close();
+  const port = await freePort();
+  const probe = { origin: `http://127.0.0.1:${port}` };
   const launcherSocket = join(data, 'launcher.sock'), database = join(data, 'minarbot.sqlite');
   const config = join(path, 'server.json');
   writeFileSync(config, JSON.stringify({ database, port, updates: { ...updates, releasesDir: releases, launcherSocket } }), { mode: 0o600 });
@@ -232,21 +232,53 @@ async function waitForTrial(app: Awaited<ReturnType<typeof managed>>, id: string
   assert.equal(selectedRelease(app.releases), target);
 }
 
-for (const route of ['direct', 'fallback', 'invalid'] as const) {
+// Holds apply replies until the receiver restarted into the new release, so the sender's
+// confirmation always comes from the restarted server, as it does on a slow link.
+async function lateReplies(t: TestContext, receiver: Awaited<ReturnType<typeof managed>>) {
+  let origin = '';
+  const committed = () => {
+    try { return JSON.parse(readFileSync(join(receiver.data, 'update-state.json'), 'utf8')).lastAttempt?.status === 'done'; }
+    catch { return false; }
+  };
+  ({ origin } = await listen(t, (req, res) => {
+    const upstream = request(receiver.origin + req.url, { method: req.method, headers: { ...req.headers, host: new URL(receiver.origin).host } }, async reply => {
+      if (req.url === '/api/environment' || req.url === '/api/pairing/redeem') {
+        // The receiver identifies itself by the origin the sender paired with.
+        const chunks = [];
+        for await (const chunk of reply) chunks.push(chunk);
+        res.writeHead(reply.statusCode ?? 502, { 'Content-Type': 'application/json' });
+        res.end(Buffer.concat(chunks).toString().replaceAll(JSON.stringify(receiver.origin), JSON.stringify(origin)));
+      } else if (req.url === '/api/peer/updates/apply' && !committed()) {
+        reply.resume();
+        res.destroy();
+      } else {
+        res.writeHead(reply.statusCode ?? 502, reply.headers);
+        reply.pipe(res);
+      }
+    });
+    upstream.on('error', () => res.destroy());
+    res.on('close', () => upstream.destroy());
+    req.pipe(upstream);
+  }));
+  return origin;
+}
+
+for (const route of ['direct', 'late-reply', 'fallback', 'invalid'] as const) {
   test(`GitHub peer fan-out uses ${route} transfer policy`, async t => {
     const dir = directory(t), staged = join(dir, 'publish');
     const target = release(staged, version);
     const publisher = await github(t, staged, target);
-    const receiverPublisher = route === 'direct' ? publisher
+    const receiverPublisher = route === 'direct' || route === 'late-reply' ? publisher
       : await github(t, staged, target, route === 'invalid' ? 'signature' : undefined);
     if (route === 'fallback') await receiverPublisher.close();
     const receiver = await managed(t, join(dir, 'receiver'), receiverPublisher.options);
+    const receiverOrigin = route === 'late-reply' ? await lateReplies(t, receiver) : receiver.origin;
     const releasesDir = join(dir, 'sender'), database = join(dir, 'sender.sqlite');
     const options = { database, updates: { releasesDir, ...publisher.options } };
     const initial = await startApp(options);
     cleanup(t, initial.close);
     const { code } = await api(receiver.origin, '/api/pairing-codes', { id: randomUUID() });
-    const machine = await api(initial.origin, '/api/machines', { id: randomUUID(), origin: receiver.origin, code });
+    const machine = await api(initial.origin, '/api/machines', { id: randomUUID(), origin: receiverOrigin, code });
     const { machines: [sender] } = await api(receiver.origin, '/api/machines');
     await api(initial.origin, '/api/machines/updates', { id: randomUUID(), environmentId: machine.id, allowed: true });
     await api(receiver.origin, '/api/machines/updates', { id: randomUUID(), environmentId: sender.id, allowed: true });
@@ -302,13 +334,13 @@ for (const route of ['direct', 'fallback', 'invalid'] as const) {
       return;
     }
     assert.equal(result.status, 'accepted', JSON.stringify(result));
-    assert.equal(final.source, route === 'direct' ? 'GitHub' : 'Local feed');
+    assert.equal(final.source, route === 'fallback' ? 'Local feed' : 'GitHub');
     assert.equal(final.bytesTransferred, final.totalBytes);
     assert.equal((await api(app.origin, path, command, 202)).machines[0].id, result.id);
     await waitForTrial(receiver, result.id, target.id);
     assert.deepEqual(publisher.ranges, [undefined]);
-    assert.equal(archiveRequests, route === 'direct' ? 0 : 1);
-    assert.equal(archiveBytes, route === 'direct' ? 0 : final.totalBytes);
+    assert.equal(archiveRequests, route === 'fallback' ? 1 : 0);
+    assert.equal(archiveBytes, route === 'fallback' ? final.totalBytes : 0);
     assert.equal(existsSync(join(releasesDir, target.id)), route === 'fallback');
   });
 }
