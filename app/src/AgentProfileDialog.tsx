@@ -2,7 +2,7 @@ import { useReturnFocus } from './hooks/useReturnFocus';
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react';
 import { flushSync } from 'react-dom';
 import { Tabs as RadixTabs } from 'radix-ui';
-import { Brain, ChevronRight, Ellipsis, Globe, Terminal, Bot, Sparkles, Orbit, Wind, Circle, Code, Eclipse, Mountain } from 'lucide-react';
+import { Brain, ChevronRight, Ellipsis, Globe } from 'lucide-react';
 import type { Runtime } from '../shared/runtime';
 import { DEVICE_BINDING, engineLoginsPath, isLoginBinding, loginBinding, usesEngineSignIn, type EngineLogin, type RuntimeChoice } from './EnginesPanel';
 import { restoreAgentCreation, type AgentCreation } from '../shared/agent-create';
@@ -12,6 +12,7 @@ import { CompactionPanel } from './CompactionPanel';
 import { AgentComputerSettings } from './AgentComputerSettings';
 import { AgentFolderSettings } from './AgentFolderSettings';
 import { AgentVisibility } from './AgentVisibility';
+import { RuntimeIcon } from './runtime-icon';
 import { ActionMenu, Alert, Button, Card, Collapsible, Combobox, Dialog, Field, IconButton, Input, RecoveryAlert, Row, Segmented, Select, Switch, Tabs, Textarea, Tooltip, useConfirm, type ComboboxSuggestion, type SelectOption } from './ui/kit';
 
 import './agent-profile.css';
@@ -24,9 +25,14 @@ const message = (error: unknown) => error instanceof Error ? error.message : 'Co
 export type Agent = { workspace_connected?: boolean; runtime?: Runtime; runnable?: boolean; blocked_reason?: string | null; computer_waiting?: boolean; avatar_revision?: number; hidden?: boolean; visibility_revision?: number; provider_account?: string; provider_available?: boolean; backup_model?: string; thread_limit: number; tool_budget?: number; web_access?: 0 | 1; revision: number; id: string; name: string; role: string; model: string; instructions: string };
 
 export type FirstAgentDefaults = { runtime: Runtime; account: string; model: string };
+export type FirstRunConnection = { value: string; label: string; runtime: Runtime; defaults: FirstAgentDefaults };
 const harnessLabels = { codex: 'Codex', claude: 'Claude Code', hermes: 'Hermes', antigravity: 'Antigravity', grok: 'Grok', pi: 'Pi', opencode: 'OpenCode', gemini: 'Gemini', kiro: 'Kiro' };
 
-export function AgentForm({ model, firstRun, focusComputer = false, profile: liveProfile, onCreated, onCancel, onReload, onVisibilityChanged, onDelete, request: api, isClientError }: { request: <T>(path: string, data?: unknown) => Promise<T>; isClientError: (error: unknown) => boolean; model: string; firstRun?: FirstAgentDefaults; focusComputer?: boolean; profile?: Agent; onCreated: (agent: Agent) => void; onCancel?: () => void; onReload?: () => Promise<void>; onVisibilityChanged?: () => Promise<void>; onDelete?: (agent: Agent) => Promise<void> }) {
+function runtimeLabel(runtime: Runtime, label: string) {
+  return <span className="agent-profile__runtime-label"><RuntimeIcon runtime={runtime} />{label}</span>;
+}
+
+export function AgentForm({ model, firstRun, connections, connection, onConnectionChange, focusComputer = false, profile: liveProfile, onCreated, onCancel, onReload, onVisibilityChanged, onDelete, request: api, isClientError }: { request: <T>(path: string, data?: unknown) => Promise<T>; isClientError: (error: unknown) => boolean; model: string; firstRun?: FirstAgentDefaults; connections?: FirstRunConnection[]; connection?: string; onConnectionChange?: (value: string) => void; focusComputer?: boolean; profile?: Agent; onCreated: (agent: Agent) => void; onCancel?: () => void; onReload?: () => Promise<void>; onVisibilityChanged?: () => Promise<void>; onDelete?: (agent: Agent) => Promise<void> }) {
   const confirm = useConfirm();
   const [look, setLook] = useState<import('./ui/avatar-shapes').AvatarLook | null>(null);
   const [LookPicker] = useState(() => lazy(() => import('./ui/avatar-shapes').then(module => ({ default: module.AvatarPicker }))));
@@ -46,6 +52,8 @@ export function AgentForm({ model, firstRun, focusComputer = false, profile: liv
   useReturnFocus(avatarChange, avatarOpen);
   const [visibilityOpen, setVisibilityOpen] = useState(false);
   const [recovery, setRecovery] = useState(() => { try { return { command: liveProfile ? null : restoreAgentCreation(sessionStorage.getItem(creationKey)), invalid: false }; } catch { return { command: null, invalid: true }; } });
+  const pending = useRef<(AgentCreation & { revision?: number; webAccess?: boolean }) | null>(recovery.command);
+  const locked = !!pending.current;
   const [avatarName, setAvatarName] = useState(profile?.name ?? recovery.command?.name ?? '');
   const [instructionCount, setInstructionCount] = useState((profile?.instructions ?? recovery.command?.instructions ?? '').length);
   const [invalid, setInvalid] = useState(recovery.invalid);
@@ -53,7 +61,9 @@ export function AgentForm({ model, firstRun, focusComputer = false, profile: liv
   const active = useRef(true);
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
 
-  const [runtime, setRuntime] = useState(profile?.runtime ?? (recovery.command ? recovery.command.runtime ?? 'api' : firstRun?.runtime ?? 'api'));
+  const [formRuntime, setRuntime] = useState<Runtime>(profile?.runtime ?? recovery.command?.runtime ?? 'api');
+  const quickBinding = firstRun ? pending.current : null;
+  const runtime = quickBinding ? quickBinding.runtime ?? 'api' : firstRun?.runtime ?? formRuntime;
   const runtimeChosen = useRef(false);
   const [runtimeChoices, setRuntimeChoices] = useState<RuntimeChoice[]>([]);
   const [harnessModel, setHarnessModel] = useState<string | null>(null);
@@ -65,7 +75,10 @@ export function AgentForm({ model, firstRun, focusComputer = false, profile: liv
     void api<{ choices: RuntimeChoice[]; defaultRuntime?: Runtime }>(profile ? `/api/agents/${profile.id}/runtimes` : '/api/runtimes').then(data => { if (stopped) return; setRuntimeChoices(data.choices); if (!profile && !recovery.command && !runtimeChosen.current && data.defaultRuntime) setRuntime(data.choices.some(choice => choice.runtime === data.defaultRuntime && choice.available && choice.enabled) ? data.defaultRuntime : 'api'); }).catch(error => { if (!stopped) setRuntimeError(message(error)); });
     return () => { stopped = true; };
   }, [profile, quick]);
-  const [account, setAccount] = useState(profile?.provider_account ?? recovery.command?.providerAccount ?? firstRun?.account ?? '');
+  const [formAccount, setAccount] = useState(profile?.provider_account ?? recovery.command?.providerAccount ?? '');
+  const account = quickBinding?.providerAccount ?? firstRun?.account ?? formAccount;
+  const lockedConnection = quickBinding ? connections?.find(item => item.defaults.runtime === runtime && item.defaults.account === account) : undefined;
+  const catalogConnection = lockedConnection?.value ?? connection;
   const [accounts, setAccounts] = useState<{ id: string; name: string; configured: boolean; defaultModel: string }[]>([]);
   const [logins, setLogins] = useState<EngineLogin[]>([]);
   const [accountError, setAccountError] = useState('');
@@ -83,7 +96,18 @@ export function AgentForm({ model, firstRun, focusComputer = false, profile: liv
   const [modelValue, setModelValue] = useState(profile?.model ?? recovery.command?.model ?? model);
   const modelEdited = useRef(false);
   function changeModel(value: string) { modelEdited.current = true; setModelValue(value); }
+  const quickModel = firstRun?.model;
+  const lastConnection = useRef({ value: catalogConnection, runtime, account, model: quickModel });
   useEffect(() => {
+    if (lockedConnection && lockedConnection.value !== connection) onConnectionChange?.(lockedConnection.value);
+    const previous = lastConnection.current;
+    if (quickModel !== undefined && !pending.current && (
+      previous.value !== catalogConnection || previous.runtime !== runtime || previous.account !== account || previous.model !== quickModel
+    )) {
+      setModelValue(quickModel);
+      modelEdited.current = false;
+    }
+    lastConnection.current = { value: catalogConnection, runtime, account, model: quickModel };
     if (!discoversModels) { setModels([]); setCatalogStatus(''); return; }
     let stopped = false;
     setModels([]); setCatalogStatus('Loading models');
@@ -98,13 +122,12 @@ export function AgentForm({ model, firstRun, focusComputer = false, profile: liv
       }
     }).catch(error => { if (!stopped) setCatalogStatus(message(error)); });
     return () => { stopped = true; };
-  }, [account, accountReload, discoversModels, profile, runtime]);
+  }, [account, accountReload, catalogConnection, discoversModels, profile, quickModel, runtime]);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [advancedOpen, setAdvancedOpen] = useState(!!recovery.command?.backupModel);
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
   const [backupValue, setBackupValue] = useState(profile?.backup_model ?? recovery.command?.backupModel ?? '');
   const [webAccess, setWebAccess] = useState(profile?.web_access !== 0);
-  const pending = useRef<(AgentCreation & { revision?: number; webAccess?: boolean }) | null>(recovery.command);
 
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (busy || invalid) return;
@@ -141,7 +164,6 @@ export function AgentForm({ model, firstRun, focusComputer = false, profile: liv
     } finally { if (active.current) setBusy(false); }
 
   }
-  const locked = !!pending.current;
   const discardInvalid = async () => {
     if (!await confirm({ title: 'Discard recovery data?', description: 'The agent may already have been created; check the agent list before discarding it.', confirm: 'Discard', danger: true })) return;
     try { sessionStorage.removeItem(creationKey); setInvalid(false); nameInput.current?.focus(); } catch { setError('Recovery storage could not be cleared.'); }
@@ -186,14 +208,13 @@ export function AgentForm({ model, firstRun, focusComputer = false, profile: liv
     {profile?.runtime === 'api' && <Button type="button" onClick={event => { flushSync(() => setRuntime('codex')); event.currentTarget.form?.requestSubmit(); }} disabled={locked || busy || !runtimeChoices.some(choice => choice.runtime === 'codex' && choice.available && choice.enabled)}>Use Codex</Button>}
     <Field label="Run with" error={runtimeError}>
       <span className="agent-profile__runtime"><Select label="Run with" valueLabel={runtime !== 'api' && !runtimeChoices.some(choice => choice.runtime === runtime) ? harnessLabels[runtime] : undefined} value={runtime} onChange={value => { runtimeChosen.current = true; setRuntime(value as Runtime); setHarnessModel(null); if (value !== runtime && (isLoginBinding(account) || account === DEVICE_BINDING && value !== 'codex' && value !== 'claude')) setAccount(''); }} disabled={locked || busy} options={[
-        { value: 'api', label: <span className="agent-profile__runtime-label"><Globe size={16} aria-hidden />API model</span> },
+        { value: 'api', label: runtimeLabel('api', 'API model') },
         ...runtimeChoices.map(choice => {
-          const Icon = { codex: Terminal, claude: Sparkles, hermes: Wind, antigravity: Orbit, grok: Eclipse, pi: Circle, opencode: Code, gemini: Bot, kiro: Mountain }[choice.runtime];
           const disabled = !choice.available || !choice.enabled;
           return {
             value: choice.runtime, disabled,
             hint: disabled ? <span className="agent-profile__runtime-reason">{choice.reason ?? 'Unavailable on this host.'}</span> : undefined,
-            label: <span className="agent-profile__runtime-label"><Icon size={16} aria-hidden />{choice.label}</span>,
+            label: runtimeLabel(choice.runtime, choice.label),
           };
         }),
       ]} /></span>
@@ -216,6 +237,8 @@ export function AgentForm({ model, firstRun, focusComputer = false, profile: liv
     <Field label="Parallel chats" error={fieldErrors.threadLimit}><Tooltip content="Excludes main chat"><Input name="threadLimit" type="number" min={1} max={32} step={1} required readOnly={locked} defaultValue={profile?.thread_limit ?? recovery.command?.threadLimit ?? 2} /></Tooltip></Field>
     <Field label="Tool step limit" error={fieldErrors.toolBudget}><Tooltip content={runtime === 'api' ? 'Stops with summary at limit. Continue to resume.' : 'API tasks only'}><Input name="toolBudget" type="number" min={10} max={200} step={1} required readOnly={locked || runtime !== 'api'} defaultValue={profile?.tool_budget ?? recovery.command?.toolBudget ?? 90} /></Tooltip></Field>
   </>;
+  const showConnections = !!connections && connections.length > 1;
+  const runtimeHint = runtime === 'api' ? 'API model' : harnessLabels[runtime];
   if (firstRun) return <form className="k-stack" onSubmit={event => {
     if (!locked && !avatarName.trim()) {
       event.preventDefault(); setFieldErrors({ name: 'Enter a name.' }); nameInput.current?.focus(); return;
@@ -223,7 +246,11 @@ export function AgentForm({ model, firstRun, focusComputer = false, profile: liv
     void create(event);
   }}>
     <Field label="Name" error={fieldErrors.name}><Input ref={nameInput} name="name" required maxLength={80} readOnly={locked || busy} value={avatarName} onChange={event => { setAvatarName(event.target.value); setFieldErrors({}); }} placeholder="Iris" autoFocus /></Field>
-    <Field label="Model" hint={runtime === 'api' ? 'API model' : harnessLabels[runtime]}>{modelField}</Field>
+    {showConnections && <Field label="Run with"><Select label="Run with" value={(locked ? lockedConnection?.value : connection) ?? ''}
+      valueLabel={locked && !lockedConnection ? runtimeLabel(runtime, runtimeHint) : undefined}
+      options={connections.map(item => ({ value: item.value, label: runtimeLabel(item.runtime, item.label) }))}
+      disabled={locked || busy || invalid} onChange={value => onConnectionChange?.(value)} /></Field>}
+    <Field label="Model" hint={showConnections ? undefined : runtimeHint}>{modelField}</Field>
     {error && <Alert tone="error">{error}</Alert>}
     {invalid && <Alert tone="error" title="Recovery data could not be read" actions={<Button size="sm" onClick={() => void discardInvalid()}>Discard recovery data</Button>} />}
     <div className="k-row-actions">

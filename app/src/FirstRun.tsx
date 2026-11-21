@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Check, Plug, Plus, Send } from 'lucide-react';
-import { AgentForm, type Agent, type FirstAgentDefaults } from './AgentProfileDialog';
+import { AgentForm, type Agent, type FirstRunConnection } from './AgentProfileDialog';
 import { ProviderForm, type ProviderAccount } from './ProvidersPanel';
 import { DEVICE_BINDING, engineLoginsPath, loginBinding, type EngineLogin, type RuntimeChoice } from './EnginesPanel';
 import { Alert, Button, PageHeader } from './ui/kit';
@@ -28,24 +28,36 @@ export function FirstRun({ request, isClientError, settingsOpen, onOpenEngines, 
   const [adding, setAdding] = useState(false);
   // A provider saved here is an explicit choice, so it outranks a detected sign-in.
   const [savedAccount, setSavedAccount] = useState('');
+  const [selectedValue, setSelectedValue] = useState('');
   const error = accounts.error || engines.error || logins.error;
-  const connected = accounts.data?.filter(account => account.configured) ?? [];
-  const ready = (runtime: string) => choices?.some(choice => choice.runtime === runtime && choice.available && choice.enabled);
-  const openai = ready('codex') && connected.find(account => account.provider === 'openai-compatible');
-  const account = connected.find(account => account.id === savedAccount) ?? (openai || connected[0]);
-  // Codex or Claude Code already signed in on this machine needs no key and no extra login.
-  const device = (['codex', 'claude'] as const).map(runtime => choices?.find(choice => choice.runtime === runtime
-    && choice.available && choice.enabled && choice.signedIn === true)).find(choice => choice);
-  const host = choices?.find(choice => !['codex', 'claude'].includes(choice.runtime)
-    && choice.available && choice.enabled && choice.signedIn === true);
-  const login = logins.data?.find(login => login.signedIn && ready(login.runtime));
-  const useAccount = account && (savedAccount || !device);
-  const connection = useAccount ? account.name : device ? `${device.label} on this machine` : account?.name ?? login?.name ?? host?.label;
-  const defaults: FirstAgentDefaults | undefined = useAccount
-    ? { runtime: account.provider === 'openai-compatible' && ready('codex') ? 'codex' : 'api', account: account.id, model: account.defaultModel }
-    : device ? { runtime: device.runtime as FirstAgentDefaults['runtime'], account: DEVICE_BINDING, model: 'default' }
-    : login ? { runtime: login.runtime, account: loginBinding(login), model: 'default' }
-    : host && { runtime: host.runtime, account: '', model: host.models[0]?.id ?? 'default' };
+  const ready = choices?.filter(choice => choice.available && choice.enabled) ?? [];
+  const signedIn = ready.filter(choice => choice.signedIn === true);
+  const codexReady = ready.some(choice => choice.runtime === 'codex');
+  const devices = (['codex', 'claude'] as const).flatMap<FirstRunConnection>(runtime => {
+    const choice = signedIn.find(choice => choice.runtime === runtime);
+    return choice ? [{ value: `device:${runtime}`, label: choice.label, runtime, defaults: { runtime, account: DEVICE_BINDING, model: 'default' } }] : [];
+  });
+  const providers = accounts.data?.filter(account => account.configured).map<FirstRunConnection>(account => {
+    const runtime = account.provider === 'openai-compatible' && codexReady ? 'codex' : 'api';
+    return { value: `account:${account.id}`, label: account.name, runtime, defaults: { runtime, account: account.id, model: account.defaultModel } };
+  }) ?? [];
+  const hosts = signedIn.filter(({ runtime }) => runtime !== 'codex' && runtime !== 'claude').map<FirstRunConnection>(({ runtime, label, models }) => ({
+    value: `host:${runtime}`, label, runtime, defaults: { runtime, account: '', model: models[0]?.id ?? 'default' },
+  }));
+  const readyLogins = logins.data?.filter(login => login.signedIn && ready.some(choice => choice.runtime === login.runtime)) ?? [];
+  const otherConnections = [...devices, ...providers, ...hosts];
+  const engineLogins = readyLogins.map<FirstRunConnection>(login => {
+    const { name, runtime } = login;
+    const value = loginBinding(login);
+    const ambiguous = otherConnections.some(item => item.label === name) || readyLogins.some(other => other.id !== login.id && other.name === name);
+    const label = ambiguous ? `${name} (${ready.find(choice => choice.runtime === runtime)?.label})` : name;
+    return { value, label, runtime, defaults: { runtime, account: value, model: 'default' } };
+  });
+  const connections = [...devices, ...engineLogins, ...providers, ...hosts];
+  const account = providers.find(item => item.defaults.account === savedAccount) ?? providers.find(item => item.runtime === 'codex') ?? providers[0];
+  const automatic = account && (savedAccount || !devices.length) ? account : devices[0] ?? engineLogins[0] ?? hosts[0];
+  const selection = connections.find(item => item.value === selectedValue) ?? automatic;
+  const defaults = selection?.defaults;
   const activeStep = defaults && !adding ? 1 : 0;
 
   return <main className="chat page-view bs-root"><div className="page-scroll">
@@ -60,8 +72,8 @@ export function FirstRun({ request, isClientError, settingsOpen, onOpenEngines, 
             <div className="first-run__step">
               <span className="first-run__icon" aria-hidden>{done ? <Check size={15} /> : <Icon size={15} />}</span>
               <strong>{title}</strong>
-              {done && <span className="first-run__status">{connection}</span>}
-              {done && !useAccount && <Button onClick={() => setAdding(true)}>Use an API key</Button>}
+              {done && <span className="first-run__status">{selection?.label}</span>}
+              {done && !selection?.value.startsWith('account:') && <Button onClick={() => setAdding(true)}>Use an API key</Button>}
             </div>
             {active && <div className="first-run__form">
               {index === 0 && (accounts.data || accounts.error) && <div className="k-stack">
@@ -74,12 +86,14 @@ export function FirstRun({ request, isClientError, settingsOpen, onOpenEngines, 
                 <div onFocusCapture={() => setAdding(true)}><ProviderForm request={request} onSaved={saved => {
                   accounts.setData(current => [...current ?? [], saved]);
                   setSavedAccount(saved.id);
+                  setSelectedValue(`account:${saved.id}`);
                   setAdding(false);
                 }} /></div>
-                {defaults && <Button variant="ghost" onClick={() => setAdding(false)}>Use {connection}</Button>}
+                {defaults && <Button variant="ghost" onClick={() => setAdding(false)}>Use {selection?.label}</Button>}
               </div>}
-              {index === 1 && ((choices || !engines.busy) && defaults
-                ? <AgentForm request={request} isClientError={isClientError} model={defaults.model} firstRun={defaults} onCreated={onCreated} />
+              {index === 1 && ((choices || !engines.busy) && selection
+                ? <AgentForm request={request} isClientError={isClientError} model={selection.defaults.model} firstRun={selection.defaults}
+                  connections={connections} connection={selection.value} onConnectionChange={setSelectedValue} onCreated={onCreated} />
                 : <span className="k-field__hint" role="status">Checking engines…</span>)}
             </div>}
           </li>;
