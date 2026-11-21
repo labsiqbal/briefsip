@@ -168,6 +168,16 @@ pub(crate) async fn device_signed_in(
 ) -> Option<bool> {
     device_folder(runtime)?;
     let home = std::env::var_os("HOME")?;
+    let mut env = std::collections::HashMap::from([
+        ("PATH".to_owned(), crate::harness::path(state)),
+        ("HOME".to_owned(), home.to_string_lossy().into_owned()),
+    ]);
+    env.extend(
+        device_environment(runtime)
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value.to_string_lossy().into_owned())),
+    );
+    crate::harness::mise_environment(executable, &mut env);
     let args: &[&str] = if runtime == "codex" {
         &["login", "status"]
     } else {
@@ -176,9 +186,7 @@ pub(crate) async fn device_signed_in(
     let mut child = Command::new(executable)
         .args(args)
         .env_clear()
-        .env("PATH", crate::harness::path(state))
-        .env("HOME", &home)
-        .envs(device_environment(runtime))
+        .envs(&env)
         .current_dir(&home)
         .stdin(Stdio::null())
         .stdout(Stdio::null())

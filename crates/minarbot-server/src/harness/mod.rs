@@ -155,6 +155,15 @@ pub fn executable(state: &AppState, runtime: &str) -> Option<PathBuf> {
     }
     None
 }
+/// Lets a mise shim run its tool outside a harness launch without resolving back to itself.
+pub(crate) fn mise_environment(
+    executable: &std::path::Path,
+    env: &mut std::collections::HashMap<String, String>,
+) {
+    if process::mise_shim(executable) {
+        process::configure_mise(env);
+    }
+}
 async fn availability(state: &AppState, runtime: &str, deadline: tokio::time::Instant) -> Value {
     let missing = || json!({"runtime":runtime,"available":false,"version":null,"signedIn":null,"models":[],"reason":format!("{} is missing from PATH. Install it and sign in on this host.",label(runtime))});
     let Some(path) = executable(state, runtime) else {
