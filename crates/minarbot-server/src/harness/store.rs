@@ -1888,22 +1888,20 @@ while read -r request; do :; done
         let _lease = config::prepare_homes(&database)?;
         let root = config::homes_root(&database)?;
         // Claude on the device sign-in skips the private home entirely.
-        for (runtime, variable) in [("codex", "CODEX_HOME")] {
-            let folder = scratch.0.join(format!("device-{runtime}"));
-            std::fs::create_dir(&folder)?;
-            let session = home(&root, runtime, None, None, Some(&folder), "", String::new())
-                .map_err(|failure| failure.message)?;
-            assert_eq!(session.environment[variable], folder.to_string_lossy());
-            assert_eq!(session.environment["HOME"], session.path.to_string_lossy());
-            assert!(std::fs::read_dir(&folder)?.next().is_none());
-            assert!(std::fs::read_dir(&session.path)?.next().is_none());
-            assert!(!session.environment.contains_key("MINARBOT_PROVIDER_KEY"));
-            assert!(!session.environment.contains_key("ANTHROPIC_API_KEY"));
-            let path = session.path.clone();
-            drop(session);
-            assert!(!path.exists());
-            assert!(folder.exists());
-        }
+        let folder = scratch.0.join("device-codex");
+        std::fs::create_dir(&folder)?;
+        let session = home(&root, "codex", None, None, Some(&folder), "", String::new())
+            .map_err(|failure| failure.message)?;
+        assert_eq!(session.environment["CODEX_HOME"], folder.to_string_lossy());
+        assert_eq!(session.environment["HOME"], session.path.to_string_lossy());
+        assert!(std::fs::read_dir(&folder)?.next().is_none());
+        assert!(std::fs::read_dir(&session.path)?.next().is_none());
+        assert!(!session.environment.contains_key("MINARBOT_PROVIDER_KEY"));
+        assert!(!session.environment.contains_key("ANTHROPIC_API_KEY"));
+        let path = session.path.clone();
+        drop(session);
+        assert!(!path.exists());
+        assert!(folder.exists());
         Ok(())
     }
 
