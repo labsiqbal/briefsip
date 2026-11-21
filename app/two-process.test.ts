@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { createInterface } from 'node:readline';
 import { join } from 'node:path';
 import { backup, type DatabaseSync } from 'node:sqlite';
-import { testDatabase } from './test-support/database.ts';
+import { markMinarbotData, testDatabase } from './test-support/database.ts';
 import { startCanonicalApp } from './test-bridge.ts';
 import { startDeviceFetchProxy, rustDeviceFixture, withDeviceProvider, startDeviceFaultProxy, startRustDeviceEnrollment, startRustDeviceConnection, enrollRustDevice, startRustDeviceTask, runRustDeviceTask, crashRustDeviceTask, exportRustDeviceRecovery, type RecoveryExport } from './test-support/rust-device-host.ts';
 import type { ActionContext } from './test-support/task-protocol.ts';
@@ -3149,7 +3149,8 @@ test('Rust exports prepared, in-flight and reported device journal evidence offl
     const database = join(dir, 'home.sqlite'), keyring = join(dir, 'keys.json'), metadata = database + '.host';
     writeFileSync(database, '', { mode: 0o600 });
     const db = testDatabase(database);
-    try { db.exec(readFileSync(new URL('device.sql', source), 'utf8')); } finally { db.close(); }
+    // The fixture is current-format device data, which carries the data marker.
+    try { markMinarbotData(db); db.exec(readFileSync(new URL('device.sql', source), 'utf8')); } finally { db.close(); }
     mkdirSync(metadata, { mode: 0o700 });
     writeFileSync(join(metadata, 'identity.json'), JSON.stringify(identity), { mode: 0o600 });
     writeFileSync(keyring, JSON.stringify(syntheticKeys), { mode: 0o600 });
