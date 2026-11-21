@@ -4,6 +4,9 @@ import { dirname, resolve } from 'node:path';
 import { backup, DatabaseSync } from 'node:sqlite';
 
 export const HUB_SCHEMA_VERSION = 1;
+// Same marker and message as crates/minarbot-launcher/src/data_format.rs.
+const MINARBOT_APPLICATION_ID = 0x4d4e5231;
+const UNMARKED = 'This database does not carry the Minarbot data marker. It was made by Minarbot 0.14.0 or earlier, or by another program. Install fresh: https://github.com/labsiqbal/minarbot#install';
 const migration = readFileSync(new URL('./migrations/001-hub.sql', import.meta.url), 'utf8');
 const checksum = createHash('sha256').update(migration).digest('hex');
 
@@ -13,8 +16,16 @@ export function transaction<T>(db: DatabaseSync, work: () => T): T {
   catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 
+/** Marks a new, empty hub database and refuses one that holds data without the marker. */
+function adoptHubData(db: DatabaseSync) {
+  if (db.prepare('PRAGMA application_id').get()!.application_id === MINARBOT_APPLICATION_ID) return;
+  if (db.prepare('PRAGMA page_count').get()!.page_count !== 0) throw new Error(UNMARKED);
+  db.exec(`PRAGMA application_id=${MINARBOT_APPLICATION_ID}`);
+}
+
 export function initializeHubSchema(db: DatabaseSync) {
   db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000');
+  adoptHubData(db);
   const tables = db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
   if (tables.length && !tables.some(row => row.name === 'hub_migrations')) throw new Error('Refusing non-hub database.');
   transaction(db, () => {

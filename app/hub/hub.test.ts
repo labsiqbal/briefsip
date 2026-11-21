@@ -6,7 +6,7 @@ import { linkSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, sym
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { testDatabase } from '../test-support/database.ts';
+import { markMinarbotData, testDatabase } from '../test-support/database.ts';
 import ts from 'typescript';
 import { canonicalJson, ProtocolError, sha256 } from '../shared/protocol.ts';
 import { activateRestoredHub, backupHub, fenceRestoredHub, initializeHubSchema, openHubDatabase, transaction } from './schema.ts';
@@ -352,15 +352,23 @@ test('oversized outbound frame rolls back message and turn rather than omitting 
   assert.equal(f.a.one('SELECT count(*) AS n FROM turns')!.n,0);
 });
 
+test('hub marks new data and refuses data without the Minarbot data marker', () => {
+  const fresh=testDatabase(':memory:'); initializeHubSchema(fresh);
+  assert.equal(fresh.prepare('PRAGMA application_id').get()!.application_id,0x4d4e5231); initializeHubSchema(fresh); fresh.close();
+  const old=testDatabase(':memory:'); old.exec('CREATE TABLE hub_migrations(version INTEGER PRIMARY KEY,checksum TEXT NOT NULL) STRICT');
+  assert.throws(()=>initializeHubSchema(old),/^Error: This database does not carry the Minarbot data marker\./);
+  assert.equal(old.prepare('PRAGMA application_id').get()!.application_id,0); assert(!old.prepare("SELECT 1 FROM sqlite_schema WHERE name='hub_state'").get()); old.close();
+});
+
 test('migration v0 fixture initializes atomically, checksum/future/foreign database rejection preserves data', () => {
-  const db=testDatabase(':memory:');
+  const db=testDatabase(':memory:'); markMinarbotData(db);
   db.exec('CREATE TABLE hub_migrations(version INTEGER PRIMARY KEY,checksum TEXT NOT NULL) STRICT'); initializeHubSchema(db);
   const rows=db.prepare('SELECT * FROM hub_migrations').all(); initializeHubSchema(db); assert.deepEqual(db.prepare('SELECT * FROM hub_migrations').all(),rows);
   db.prepare("UPDATE hub_migrations SET checksum='tampered'").run(); assert.throws(()=>initializeHubSchema(db),/checksum/);
   assert.equal(db.prepare('SELECT count(*) AS n FROM hub_state').get()!.n,1); db.close();
-  const future=testDatabase(':memory:'); future.exec("CREATE TABLE hub_migrations(version INTEGER PRIMARY KEY,checksum TEXT NOT NULL) STRICT; INSERT INTO hub_migrations VALUES(99,'future')"); assert.throws(()=>initializeHubSchema(future),/version/); assert(!future.prepare("SELECT 1 FROM sqlite_schema WHERE name='projects'").get()); future.close();
-  const foreign=testDatabase(':memory:'); foreign.exec('CREATE TABLE agents(id TEXT)'); assert.throws(()=>initializeHubSchema(foreign),/non-hub/); foreign.close();
-  const broken=testDatabase(':memory:'); broken.exec('CREATE TABLE hub_migrations(version INTEGER PRIMARY KEY,checksum TEXT NOT NULL) STRICT; CREATE TABLE sections(id TEXT)'); assert.throws(()=>initializeHubSchema(broken)); assert(!broken.prepare("SELECT 1 FROM sqlite_schema WHERE name='accounts'").get()); assert.equal(broken.prepare('SELECT count(*) AS n FROM hub_migrations').get()!.n,0); broken.close();
+  const future=testDatabase(':memory:'); markMinarbotData(future); future.exec("CREATE TABLE hub_migrations(version INTEGER PRIMARY KEY,checksum TEXT NOT NULL) STRICT; INSERT INTO hub_migrations VALUES(99,'future')"); assert.throws(()=>initializeHubSchema(future),/version/); assert(!future.prepare("SELECT 1 FROM sqlite_schema WHERE name='projects'").get()); future.close();
+  const foreign=testDatabase(':memory:'); markMinarbotData(foreign); foreign.exec('CREATE TABLE agents(id TEXT)'); assert.throws(()=>initializeHubSchema(foreign),/non-hub/); foreign.close();
+  const broken=testDatabase(':memory:'); markMinarbotData(broken); broken.exec('CREATE TABLE hub_migrations(version INTEGER PRIMARY KEY,checksum TEXT NOT NULL) STRICT; CREATE TABLE sections(id TEXT)'); assert.throws(()=>initializeHubSchema(broken)); assert(!broken.prepare("SELECT 1 FROM sqlite_schema WHERE name='accounts'").get()); assert.equal(broken.prepare('SELECT count(*) AS n FROM hub_migrations').get()!.n,0); broken.close();
 });
 
 test('exclusive writer/WAL, consistent backup/reopen and restore generation fence invitations and unfinished work', async t => {

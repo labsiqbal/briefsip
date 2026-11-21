@@ -20,6 +20,20 @@ pub fn mark(db: &Connection) -> rusqlite::Result<()> {
     db.pragma_update(None, "application_id", APPLICATION_ID)
 }
 
+/// Marks a new, empty database and reports whether the database carries the marker.
+/// Callers refuse a database that holds data without it.
+pub fn adopt(db: &Connection) -> rusqlite::Result<bool> {
+    if is_marked(db)? {
+        return Ok(true);
+    }
+    let pages: i64 = db.pragma_query_value(None, "page_count", |row| row.get(0))?;
+    if pages != 0 {
+        return Ok(false);
+    }
+    mark(db)?;
+    Ok(true)
+}
+
 pub fn is_backup(format: &str, version: i64) -> bool {
     [WORKSPACE_BACKUP, CANONICAL_BACKUP].contains(&(format, version))
 }

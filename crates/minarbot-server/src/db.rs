@@ -62,12 +62,8 @@ pub fn open(path: &Path, canonical_mode: bool, now: i64) -> Result<Database> {
     connection.set_prepared_statement_cache_capacity(128);
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
     let guard = server_guard(path)?;
-    if !data_format::is_marked(&connection)? {
-        let pages: i64 = connection.pragma_query_value(None, "page_count", |row| row.get(0))?;
-        if pages != 0 {
-            return Err(data_format::UNMARKED.into());
-        }
-        data_format::mark(&connection)?;
+    if !data_format::adopt(&connection)? {
+        return Err(data_format::UNMARKED.into());
     }
     connection.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000")?;
     if canonical_mode {

@@ -15,6 +15,9 @@ pub(super) fn initialize(db: &mut Connection) -> Result<()> {
     ).optional()?.is_some() {
         return Err("Canonical database cannot be used as a device database".into());
     }
+    if !minarbot_launcher::data_format::adopt(db)? {
+        return Err(minarbot_launcher::data_format::UNMARKED.into());
+    }
     db.execute_batch(
         "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000",
     )?;
@@ -90,6 +93,7 @@ mod tests {
     #[test]
     fn upgrades_v2_without_rewriting_device_state() -> Result<()> {
         let mut db = Connection::open_in_memory()?;
+        minarbot_launcher::data_format::mark(&db)?;
         db.execute_batch(include_str!("v2.sql"))?;
         db.pragma_update(None, "user_version", 2)?;
         db.execute(
@@ -115,6 +119,27 @@ mod tests {
     }
 
     #[test]
+    fn marks_new_device_data_and_refuses_unmarked_data() -> Result<()> {
+        let mut fresh = Connection::open_in_memory()?;
+        initialize(&mut fresh)?;
+        assert!(minarbot_launcher::data_format::is_marked(&fresh)?);
+        initialize(&mut fresh)?;
+        let mut old = Connection::open_in_memory()?;
+        old.execute_batch(include_str!("v2.sql"))?;
+        old.pragma_update(None, "user_version", 2)?;
+        let error = initialize(&mut old)
+            .err()
+            .ok_or("Unmarked device data must be refused")?;
+        assert_eq!(error.to_string(), minarbot_launcher::data_format::UNMARKED);
+        assert_eq!(
+            old.pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))?,
+            2
+        );
+        assert!(!minarbot_launcher::data_format::is_marked(&old)?);
+        Ok(())
+    }
+
+    #[test]
     fn rejects_canonical_and_unknown_versions() -> Result<()> {
         let mut db = Connection::open_in_memory()?;
         db.execute_batch("CREATE TABLE schema_migrations(version INTEGER)")?;
@@ -122,6 +147,7 @@ mod tests {
             initialize(&mut db).is_err_and(|err| err.to_string().contains("Canonical database"))
         );
         db.execute_batch("DROP TABLE schema_migrations; PRAGMA user_version=4")?;
+        minarbot_launcher::data_format::mark(&db)?;
         assert!(
             initialize(&mut db).is_err_and(|err| err.to_string().contains("Unsupported device"))
         );
