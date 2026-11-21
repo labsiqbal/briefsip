@@ -35,6 +35,8 @@ pub struct Config {
     #[serde(skip)]
     pub homes: Arc<Mutex<HashMap<String, super::store::Home>>>,
     #[serde(skip)]
+    pub(super) model_catalog: super::model_catalog::Cache,
+    #[serde(skip)]
     clocks: Arc<SyncMutex<HashMap<String, TurnClock>>>,
 }
 #[derive(Clone, Deserialize)]

@@ -12,7 +12,7 @@ import { CompactionPanel } from './CompactionPanel';
 import { AgentComputerSettings } from './AgentComputerSettings';
 import { AgentFolderSettings } from './AgentFolderSettings';
 import { AgentVisibility } from './AgentVisibility';
-import { ActionMenu, Alert, Button, Card, Collapsible, Combobox, Dialog, Field, IconButton, Input, RecoveryAlert, Row, Segmented, Select, Switch, Tabs, Textarea, Tooltip, useConfirm, type SelectOption } from './ui/kit';
+import { ActionMenu, Alert, Button, Card, Collapsible, Combobox, Dialog, Field, IconButton, Input, RecoveryAlert, Row, Segmented, Select, Switch, Tabs, Textarea, Tooltip, useConfirm, type ComboboxSuggestion, type SelectOption } from './ui/kit';
 
 import './agent-profile.css';
 
@@ -77,25 +77,31 @@ export function AgentForm({ model, firstRun, focusComputer = false, profile: liv
     void api<EngineLogin[]>(engineLoginsPath).then(items => { if (!stopped) setLogins(items); }).catch(error => { if (!stopped) setAccountError(message(error)); });
     return () => { stopped = true; };
   }, [accountReload, quick]);
-  const [models, setModels] = useState<string[]>([]);
+  const discoversModels = ['api', 'codex', 'claude'].includes(runtime);
+  const [models, setModels] = useState<ComboboxSuggestion[]>([]);
   const [catalogStatus, setCatalogStatus] = useState('Loading models');
+  const [modelValue, setModelValue] = useState(profile?.model ?? recovery.command?.model ?? model);
+  const modelEdited = useRef(false);
+  function changeModel(value: string) { modelEdited.current = true; setModelValue(value); }
   useEffect(() => {
-    if ((quick && model) || !['api', 'codex', 'claude'].includes(runtime)) { setModels([]); return; }
-    if (usesEngineSignIn(account)) { setModels([]); setCatalogStatus(''); return; }
+    if (!discoversModels) { setModels([]); setCatalogStatus(''); return; }
     let stopped = false;
     setModels([]); setCatalogStatus('Loading models');
-    void api<{ models: string[] }>(`/api/models?account=${encodeURIComponent(account)}`).then(data => {
+    void api<{ models: string[]; catalog?: { id: string; label: string; default?: boolean }[] }>(`/api/models?runtime=${encodeURIComponent(runtime)}&account=${encodeURIComponent(account)}`).then(data => {
       if (!stopped) {
-        setModels(data.models); setCatalogStatus(data.models.length ? '' : 'Enter model ID');
-        if (quick) setModelValue(current => current || data.models[0] || '');
+        const labels = new Map<string, string>();
+        for (const item of data.catalog ?? []) if (!labels.has(item.id)) labels.set(item.id, item.label);
+        const suggestions = data.models.map(id => ({ value: id, label: labels.get(id) ?? id }));
+        setModels(suggestions); setCatalogStatus(suggestions.length ? '' : 'Enter model ID');
+        const recommended = data.catalog?.find(item => item.default)?.id ?? data.models[0];
+        if (recommended && !profile && !pending.current && !modelEdited.current) setModelValue(recommended);
       }
     }).catch(error => { if (!stopped) setCatalogStatus(message(error)); });
     return () => { stopped = true; };
-  }, [account, accountReload, model, runtime, quick]);
+  }, [account, accountReload, discoversModels, profile, runtime]);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [advancedOpen, setAdvancedOpen] = useState(!!recovery.command?.backupModel);
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
-  const [modelValue, setModelValue] = useState(profile?.model ?? recovery.command?.model ?? model);
   const [backupValue, setBackupValue] = useState(profile?.backup_model ?? recovery.command?.backupModel ?? '');
   const [webAccess, setWebAccess] = useState(profile?.web_access !== 0);
   const pending = useRef<(AgentCreation & { revision?: number; webAccess?: boolean }) | null>(recovery.command);
@@ -103,7 +109,8 @@ export function AgentForm({ model, firstRun, focusComputer = false, profile: liv
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (busy || invalid) return;
     const form = new FormData(event.currentTarget);
-    const data = pending.current ?? { id: crypto.randomUUID(), ...(profile ? { revision: profile.revision, webAccess } : setup ? { setup: true } : {}), providerAccount: account, name: String(form.get('name')).trim() || (setup ? 'New agent' : ''), role: String(form.get('role') ?? '').trim(), model: String(form.get('model')).trim(), backupModel: String(form.get('backupModel') ?? '').trim(), instructions: String(form.get('instructions') ?? '').trim() || 'Help the user complete their tasks.', threadLimit: Number(form.get('threadLimit') ?? 2), toolBudget: Number(form.get('toolBudget') ?? 90) };
+    const followEngineDefault = quick && model === 'default' && usesEngineSignIn(account) && !modelEdited.current;
+    const data = pending.current ?? { id: crypto.randomUUID(), ...(profile ? { revision: profile.revision, webAccess } : setup ? { setup: true } : {}), providerAccount: account, name: String(form.get('name')).trim() || (setup ? 'New agent' : ''), role: String(form.get('role') ?? '').trim(), model: followEngineDefault ? 'default' : String(form.get('model')).trim(), backupModel: String(form.get('backupModel') ?? '').trim(), instructions: String(form.get('instructions') ?? '').trim() || 'Help the user complete their tasks.', threadLimit: Number(form.get('threadLimit') ?? 2), toolBudget: Number(form.get('toolBudget') ?? 90) };
     if (profile && runtime !== (profile.runtime ?? 'api') && !pending.current) {
       Object.assign(data, { runtime, confirmRuntime: true });
     }
@@ -174,6 +181,7 @@ export function AgentForm({ model, firstRun, focusComputer = false, profile: liv
       <Textarea name="instructions" required={!!profile || setup} maxLength={8000} readOnly={locked} defaultValue={profile?.instructions ?? recovery.command?.instructions} rows={6} onChange={event => setInstructionCount(event.target.value.length)} placeholder={!profile && setup ? 'Describe the work this agent should help with.' : undefined} />{profile && <span aria-hidden className="agent-profile__count">{instructionCount}/8000</span>}
     </Field>
   </>;
+  const modelField = <Combobox name="model" value={modelValue} onChange={changeModel} suggestions={models} required maxLength={160} readOnly={locked || busy || !discoversModels} placeholder="Enter model ID" />;
   const modelFields = <>
     {profile?.runtime === 'api' && <Button type="button" onClick={event => { flushSync(() => setRuntime('codex')); event.currentTarget.form?.requestSubmit(); }} disabled={locked || busy || !runtimeChoices.some(choice => choice.runtime === 'codex' && choice.available && choice.enabled)}>Use Codex</Button>}
     <Field label="Run with" error={runtimeError}>
@@ -196,8 +204,8 @@ export function AgentForm({ model, firstRun, focusComputer = false, profile: liv
     {runtime !== 'api' && runtime !== 'codex' && runtime !== 'claude' && <Field label="Harness model">
       <Select label="Harness model" value={harnessModel ?? runtimeChoices.find(choice => choice.runtime === runtime)?.model ?? ''} onChange={setHarnessModel} disabled={locked || busy} options={[{ value: '', label: 'Host default' }, ...(runtimeChoices.find(choice => choice.runtime === runtime)?.models ?? []).map(model => ({ value: model.id, label: model.label }))]} />
     </Field>}
-    <Field label="Model" error={fieldErrors.model} hint={['api', 'codex', 'claude'].includes(runtime) ? catalogStatus : undefined}>
-      <Combobox name="model" value={modelValue} onChange={setModelValue} suggestions={models} required maxLength={160} readOnly={locked || !['api', 'codex', 'claude'].includes(runtime)} placeholder="Enter model ID" />
+    <Field label="Model" error={fieldErrors.model} hint={discoversModels ? catalogStatus : undefined}>
+      {modelField}
     </Field>
     {profile && <Collapsible title="Fallback model" defaultOpen={!!profile.backup_model}>
       <Field label="Fallback model" optional><Tooltip content="Tried once for quota or availability failure"><span><Combobox name="backupModel" value={backupValue} onChange={setBackupValue} suggestions={models} maxLength={160} readOnly={locked || runtime !== 'api'} placeholder="Enter model ID" /></span></Tooltip></Field>
@@ -215,7 +223,7 @@ export function AgentForm({ model, firstRun, focusComputer = false, profile: liv
     void create(event);
   }}>
     <Field label="Name" error={fieldErrors.name}><Input ref={nameInput} name="name" required maxLength={80} readOnly={locked || busy} value={avatarName} onChange={event => { setAvatarName(event.target.value); setFieldErrors({}); }} placeholder="Iris" autoFocus /></Field>
-    <Field label="Model" hint={runtime === 'api' ? 'API model' : harnessLabels[runtime]}><Input name="model" required maxLength={160} readOnly={locked || busy || !['api', 'codex'].includes(runtime) && !usesEngineSignIn(account)} value={modelValue} onChange={event => setModelValue(event.target.value)} /></Field>
+    <Field label="Model" hint={runtime === 'api' ? 'API model' : harnessLabels[runtime]}>{modelField}</Field>
     {error && <Alert tone="error">{error}</Alert>}
     {invalid && <Alert tone="error" title="Recovery data could not be read" actions={<Button size="sm" onClick={() => void discardInvalid()}>Discard recovery data</Button>} />}
     <div className="k-row-actions">

@@ -65,33 +65,40 @@ export function Select({ value, onChange, options, disabled, placeholder, valueL
   </RadixSelect.Root>;
 }
 
+export type ComboboxSuggestion = string | { value: string; label: string };
 /** Text input with a suggestion popover; the value stays free text. */
-export function Combobox({ value, onChange, suggestions, name, placeholder, readOnly, required, maxLength, emptyText }: { value: string; onChange: (value: string) => void; suggestions: string[]; name?: string; placeholder?: string; readOnly?: boolean; required?: boolean; maxLength?: number; emptyText?: string }) {
+export function Combobox({ value, onChange, suggestions, name, placeholder, readOnly, required, maxLength, emptyText }: { value: string; onChange: (value: string) => void; suggestions: ComboboxSuggestion[]; name?: string; placeholder?: string; readOnly?: boolean; required?: boolean; maxLength?: number; emptyText?: string }) {
   const field = useField();
   const [open, setOpen] = useState(false), [active, setActive] = useState(0);
+  const [filtering, setFiltering] = useState(false);
   const listId = useId(), input = useRef<HTMLInputElement>(null);
   const query = value.trim().toLowerCase();
-  const items = (query && !suggestions.includes(value) ? suggestions.filter(item => item.toLowerCase().includes(query)) : suggestions).slice(0, 50);
-  useEffect(() => { setActive(0); }, [value, open]);
-  const choose = (item: string) => { onChange(item); setOpen(false); };
-  return <Popover.Root open={open && !readOnly && (items.length > 0 || !!emptyText)} onOpenChange={setOpen}>
+  const options = suggestions.map(item => typeof item === 'string' ? { value: item, label: item } : item);
+  const items = (filtering && query ? options.filter(item => item.value.toLowerCase().includes(query) || item.label.toLowerCase().includes(query)) : options).slice(0, 50);
+  const hasSuggestions = options.length > 0 || !!emptyText;
+  const expanded = open && !readOnly && (items.length > 0 || !!emptyText);
+  const selected = items.findIndex(item => item.value === value);
+  useEffect(() => { setActive(Math.max(selected, 0)); }, [value, open, selected]);
+  const choose = (item: { value: string; label: string }) => { onChange(item.value); setOpen(false); };
+  return <Popover.Root open={expanded} onOpenChange={setOpen}>
     <Popover.Anchor asChild>
       <div className="k-combobox"><input ref={input} id={field?.id} name={name} className="k-input" value={value} placeholder={placeholder} readOnly={readOnly} required={required} maxLength={maxLength} autoComplete="off"
-        role="combobox" aria-expanded={open} aria-controls={listId} aria-autocomplete="list" aria-describedby={field?.describedBy} aria-invalid={field?.invalid || undefined}
-        aria-activedescendant={open && items[active] ? `${listId}-${active}` : undefined}
-        onFocus={() => setOpen(true)} onClick={() => setOpen(true)} onChange={event => { onChange(event.target.value); setOpen(true); }}
+        role={hasSuggestions ? 'combobox' : undefined} aria-expanded={hasSuggestions ? expanded : undefined} aria-controls={expanded ? listId : undefined} aria-autocomplete={hasSuggestions ? 'list' : undefined} aria-describedby={field?.describedBy} aria-invalid={field?.invalid || undefined}
+        aria-activedescendant={expanded && items[active] ? `${listId}-${active}` : undefined}
+        onFocus={() => { setFiltering(false); setOpen(true); }} onClick={() => setOpen(true)} onChange={event => { onChange(event.target.value); setFiltering(true); setOpen(true); }}
         onKeyDown={event => {
-          if (event.key === 'ArrowDown') { event.preventDefault(); setOpen(true); setActive(index => Math.min(index + 1, items.length - 1)); }
-          else if (event.key === 'ArrowUp') { event.preventDefault(); setActive(index => Math.max(index - 1, 0)); }
-          else if (event.key === 'Enter' && open && items[active]) { event.preventDefault(); choose(items[active]); }
-          else if (event.key === 'Escape' && open) { event.preventDefault(); event.stopPropagation(); setOpen(false); }
-        }} />{!readOnly && <IconButton label={`Show ${name === 'backupModel' ? 'fallback' : name ?? 'options'} suggestions`} className="k-combobox__toggle" onClick={() => { setOpen(true); input.current?.focus(); }}><ChevronDown size={14} aria-hidden /></IconButton>}</div>
+          if (readOnly) return;
+          if (event.key === 'ArrowDown' && items.length) { event.preventDefault(); setOpen(true); setActive(index => Math.min(index + 1, items.length - 1)); }
+          else if (event.key === 'ArrowUp' && expanded) { event.preventDefault(); setActive(index => Math.max(index - 1, 0)); }
+          else if (event.key === 'Enter' && expanded && items[active]) { event.preventDefault(); choose(items[active]); }
+          else if (event.key === 'Escape' && expanded) { event.preventDefault(); event.stopPropagation(); setOpen(false); }
+        }} />{!readOnly && hasSuggestions && <IconButton label={`Show ${name === 'backupModel' ? 'fallback' : name ?? 'options'} suggestions`} className="k-combobox__toggle" onClick={() => { setFiltering(false); setOpen(true); input.current?.focus(); }}><ChevronDown size={14} aria-hidden /></IconButton>}</div>
     </Popover.Anchor>
     <Popover.Portal>
       <Popover.Content className="k-pop k-combobox__content" align="start" sideOffset={6} onOpenAutoFocus={event => event.preventDefault()} onInteractOutside={event => { if ((event.target as HTMLElement | null)?.id === field?.id) event.preventDefault(); }}>
         <ul id={listId} role="listbox" className="k-combobox__list">
-          {items.map((item, index) => <li key={item} id={`${listId}-${index}`} role="option" aria-selected={item === value} className={cx('k-menu__item', index === active && 'is-active')} onMouseDown={event => event.preventDefault()} onMouseEnter={() => setActive(index)} onClick={() => choose(item)}>
-            <span className="k-combobox__value">{item}</span>{item === value && <Check size={14} aria-hidden />}
+          {items.map((item, index) => <li key={item.value} id={`${listId}-${index}`} role="option" aria-selected={item.value === value} className={cx('k-menu__item', index === active && 'is-active')} onMouseDown={event => event.preventDefault()} onMouseEnter={() => setActive(index)} onClick={() => choose(item)}>
+            <span className="k-combobox__value">{item.label}</span>{item.value === value && <Check size={14} aria-hidden />}
           </li>)}
           {!items.length && emptyText && <li className="k-combobox__empty">{emptyText}</li>}
         </ul>

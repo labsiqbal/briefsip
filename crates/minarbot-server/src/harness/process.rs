@@ -227,6 +227,36 @@ impl Process {
             clock: None,
         })
     }
+
+    pub fn launch_readonly(
+        path: &Path,
+        args: &[String],
+        cwd: &Path,
+        env: &HashMap<String, String>,
+    ) -> Result<Self> {
+        let cwd = cwd.to_str().ok_or_else(Failure::storage)?;
+        let executable = path.to_str().ok_or_else(Failure::storage)?;
+        let mut sandbox = vec![
+            "--die-with-parent".into(),
+            "--ro-bind".into(),
+            "/".into(),
+            "/".into(),
+            "--dev".into(),
+            "/dev".into(),
+            "--proc".into(),
+            "/proc".into(),
+            "--ro-bind-try".into(),
+            "/dev/shm".into(),
+            "/dev/shm".into(),
+            "--bind".into(),
+            cwd.into(),
+            cwd.into(),
+            "--".into(),
+            executable.into(),
+        ];
+        sandbox.extend_from_slice(args);
+        Self::launch(Path::new("/usr/bin/bwrap"), &sandbox, Path::new(cwd), env)
+    }
     pub fn record_stderr(&mut self, state: &AppState, call: i64, secrets: &[String]) {
         self.stderr_destination = Some((state.clone(), call, secrets.to_vec()));
     }
@@ -245,6 +275,9 @@ impl Process {
             .await
             .map_err(|_| error(502, "Coding harness input timed out."))?
             .map_err(|_| stopped())
+    }
+    pub fn close_stdin(&mut self) {
+        self.stdin = None;
     }
     pub async fn cancel(mut self, notification: Value) {
         // Remember descendants before the notification lets the parent exit.

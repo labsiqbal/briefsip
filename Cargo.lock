@@ -1426,6 +1426,7 @@ dependencies = [
  "subtle",
  "tokio",
  "tokio-tungstenite",
+ "toml_edit",
  "unicode-normalization",
  "url",
  "uuid",

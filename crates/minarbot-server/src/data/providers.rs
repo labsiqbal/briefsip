@@ -462,6 +462,12 @@ const INVALID: &str =
 const TIMEOUT: &str = "Model discovery timed out. Check the provider and try again.";
 pub async fn models(state: &AppState, q: &[(String, String)]) -> Result<Value> {
     let account_id = param(q, "account").unwrap_or("");
+    let runtime = param(q, "runtime");
+    if let Some(engine @ ("codex" | "claude")) = runtime {
+        if account_id == logins::DEVICE || account_id.starts_with(logins::PREFIX) {
+            return crate::harness::model_catalog::models(state, engine, account_id).await;
+        }
+    }
     let account=accounts(state)?.into_iter().find(|a|a.id==account_id).ok_or_else(||error(503,"The selected provider account is missing. Choose another account or update server configuration."))?;
     if account.base.is_empty() {
         return Err(error(
@@ -473,7 +479,18 @@ pub async fn models(state: &AppState, q: &[(String, String)]) -> Result<Value> {
             },
         ));
     }
-    Ok(json!({"models":discover_with_timeout(state, &account, true).await?}))
+    let models = discover_with_timeout(state, &account, true).await?;
+    if matches!(runtime, Some("api" | "codex" | "claude")) {
+        use crate::harness::model_catalog::{response, Model};
+        Ok(response(
+            models
+                .iter()
+                .map(|id| Model::new(id, id, id == &account.model))
+                .collect(),
+        ))
+    } else {
+        Ok(json!({"models":models}))
+    }
 }
 
 pub(super) async fn test_models(state: &AppState, account: &Account) -> Result<Vec<String>> {
@@ -492,7 +509,13 @@ async fn discover_with_timeout(
     .await
     .map_err(|_| error(502, TIMEOUT))?
 }
-async fn discover(a: &Account, paginate: bool) -> Result<Vec<String>> {
+pub(crate) fn valid_model_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.trim() == id
+        && id.encode_utf16().count() <= 160
+        && !id.chars().any(|c| c < ' ' || c == '\u{7f}')
+}
+pub(crate) async fn discover(a: &Account, paginate: bool) -> Result<Vec<String>> {
     let mut url = address(&a.base).map_err(|_| error(502, INVALID))?;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -570,12 +593,7 @@ async fn discover(a: &Account, paginate: bool) -> Result<Vec<String>> {
             } else {
                 let id = row["id"]
                     .as_str()
-                    .filter(|s| {
-                        !s.is_empty()
-                            && s.trim() == *s
-                            && s.encode_utf16().count() <= 160
-                            && !s.chars().any(|c| c < ' ' || c == '\u{7f}')
-                    })
+                    .filter(|s| valid_model_id(s))
                     .ok_or_else(|| error(502, INVALID))?;
                 models.insert(id.to_owned());
             }

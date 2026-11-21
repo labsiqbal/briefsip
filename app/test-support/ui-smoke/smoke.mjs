@@ -1052,7 +1052,7 @@ try {
       await visible(dialog.getByRole('button', { name: 'Save changes', exact: true }));
       await dialog.getByRole('button', { name: 'Save changes', exact: true }).click(); await hidden(dialog);
       const { id, ...payload } = commands[0]; assert.match(id, /^[a-f0-9-]{36}$/i);
-      assert.deepEqual(payload, { revision: agent.revision, providerAccount: agent.provider_account ?? '', name: agent.name, role: agent.role, instructions: agent.instructions, model: 'smoke-primary', backupModel: 'smoke-secondary', threadLimit: 7, toolBudget: 131 });
+      assert.deepEqual(payload, { revision: agent.revision, webAccess: agent.web_access !== 0, providerAccount: agent.provider_account ?? '', name: agent.name, role: agent.role, instructions: agent.instructions, model: 'smoke-primary', backupModel: 'smoke-secondary', threadLimit: 7, toolBudget: 131 });
       // API-only fields stay mounted when switching runtime.
       await page.getByRole('button', { name: 'Edit profile', exact: true }).click();
       await dialog.getByRole('tab', { name: 'Model', exact: true }).click();
@@ -1061,7 +1061,7 @@ try {
       await dialog.getByRole('button', { name: 'Use Codex', exact: true }).click();
       await hidden(dialog);
       const { id: codingId, ...coding } = commands[1]; assert.match(codingId, /^[a-f0-9-]{36}$/i);
-      assert.deepEqual(coding, { revision: agent.revision, providerAccount: agent.provider_account ?? '', name: agent.name, role: agent.role, instructions: agent.instructions, model: 'staged-switch-model', backupModel: agent.backup_model ?? '', threadLimit: agent.thread_limit, toolBudget: agent.tool_budget ?? 90, runtime: 'codex', confirmRuntime: true });
+      assert.deepEqual(coding, { revision: agent.revision, webAccess: agent.web_access !== 0, providerAccount: agent.provider_account ?? '', name: agent.name, role: agent.role, instructions: agent.instructions, model: 'staged-switch-model', backupModel: agent.backup_model ?? '', threadLimit: agent.thread_limit, toolBudget: agent.tool_budget ?? 90, runtime: 'codex', confirmRuntime: true });
       await page.getByRole('button', { name: 'Edit profile', exact: true }).click();
       await dialog.getByLabel(/^Instructions/, { exact: false }).fill('');
       await dialog.getByRole('tab', { name: 'Model', exact: true }).click(); await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
@@ -1287,7 +1287,7 @@ try {
     } finally { release(); await page.unroute(pattern); await page.reload(); }
   });
   await check('SET2 unavailable bound account/runtime and unlisted models stay intact', async () => {
-    const directory = '**/api/agents', runtimes = /\/api\/agents\/[^/]+\/runtimes$/, catalog = '**/api/models?account=missing-fixture-account';
+    const directory = '**/api/agents', runtimes = /\/api\/agents\/[^/]+\/runtimes$/, catalog = '**/api/models?runtime=*&account=missing-fixture-account';
     await page.route(catalog, route => route.fulfill({ json: { models: [] } }));
     await page.route(directory, async route => {
       if (route.request().method() !== 'GET') return route.continue();
@@ -1295,13 +1295,14 @@ try {
       data.agents = data.agents.map(agent => agent.name === lead ? { ...agent, runtime: 'codex', provider_account: 'missing-fixture-account', model: 'unlisted-primary', backup_model: 'unlisted-fallback' } : agent);
       return route.fulfill({ response, json: data });
     });
-    await page.route(runtimes, route => route.fulfill({ json: { choices: [{ runtime: 'codex', enabled: false, version: null, reason: 'Not installed' }, { runtime: 'claude', enabled: false, version: null, reason: 'Not installed' }] } }));
+    await page.route(runtimes, route => route.fulfill({ json: { choices: [{ runtime: 'codex', label: 'Codex', available: false, enabled: false, version: null, reason: 'Not installed' }, { runtime: 'claude', label: 'Claude Code', available: false, enabled: false, version: null, reason: 'Not installed' }] } }));
     try {
       await agentChat(); await page.getByRole('button', { name: 'Edit profile', exact: true }).click();
       const dialog = page.getByRole('dialog', { name: 'Agent profile', exact: true }); await dialog.getByRole('tab', { name: 'Model', exact: true }).click();
       const runtime = dialog.getByRole('combobox', { name: 'Run with', exact: true }); assert.match(await runtime.textContent(), /Codex/);
-      const model = dialog.getByRole('combobox', { name: 'Model', exact: true }); assert.equal(await model.inputValue(), 'unlisted-primary'); assert.equal(await model.getAttribute('readonly'), null);
-      await runtime.click(); assert.equal(await page.getByRole('option', { name: /^Codex/ }).count(), 0); await page.getByRole('option', { name: 'API model', exact: true }).click();
+      const model = dialog.getByRole('textbox', { name: 'Model', exact: true }); assert.equal(await model.inputValue(), 'unlisted-primary'); assert.equal(await model.getAttribute('readonly'), null);
+      assert.equal(await model.getAttribute('placeholder'), 'Enter model ID');
+      await runtime.click(); assert.equal(await page.getByRole('option', { name: /^Codex/ }).getAttribute('aria-disabled'), 'true'); await page.getByRole('option', { name: 'API model', exact: true }).click();
       const provider = dialog.getByRole('combobox', { name: 'Provider', exact: true }); assert.match(await provider.textContent(), /Unavailable account/); await provider.click(); await visible(page.getByText('missing-fixture-account', { exact: true })); await page.keyboard.press('Escape');
       assert.equal(await model.inputValue(), 'unlisted-primary'); assert.equal(await model.getAttribute('readonly'), null);
       const values = await dialog.locator('form').evaluate(form => Object.fromEntries(new FormData(form))); assert.equal(values.backupModel, 'unlisted-fallback');

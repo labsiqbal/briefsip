@@ -59,7 +59,7 @@ impl Drop for Home {
         let _ = std::fs::remove_dir_all(&self.path);
     }
 }
-fn private(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(super) fn private(path: &Path, bytes: &[u8]) -> Result<()> {
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -68,7 +68,7 @@ fn private(path: &Path, bytes: &[u8]) -> Result<()> {
         .map_err(|_| Failure::storage())?;
     file.write_all(bytes).map_err(|_| Failure::storage())
 }
-fn home(
+pub(super) fn home(
     root: &Path,
     runtime: &str,
     account: Option<&data::providers::Account>,
@@ -378,7 +378,12 @@ fn reminder(
     let db = state.database.lock().map_err(|_| Failure::storage())?;
     turns::harness::reminder(&db.connection, turn, profile)
 }
-async fn rpc(process: &mut Process, seq: &mut i64, method: &str, params: Value) -> Result<Value> {
+pub(super) async fn rpc(
+    process: &mut Process,
+    seq: &mut i64,
+    method: &str,
+    params: Value,
+) -> Result<Value> {
     *seq += 1;
     let id = *seq;
     process

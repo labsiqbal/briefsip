@@ -166,17 +166,7 @@ pub(crate) async fn device_signed_in(
     executable: &Path,
     runtime: &str,
 ) -> Option<bool> {
-    device_folder(runtime)?;
-    let home = std::env::var_os("HOME")?;
-    let mut env = std::collections::HashMap::from([
-        ("PATH".to_owned(), crate::harness::path(state)),
-        ("HOME".to_owned(), home.to_string_lossy().into_owned()),
-    ]);
-    env.extend(
-        device_environment(runtime)
-            .into_iter()
-            .map(|(key, value)| (key.to_owned(), value.to_string_lossy().into_owned())),
-    );
+    let (home, mut env) = device_process_environment(runtime, crate::harness::path(state))?;
     crate::harness::mise_environment(executable, &mut env);
     let args: &[&str] = if runtime == "codex" {
         &["login", "status"]
@@ -187,7 +177,7 @@ pub(crate) async fn device_signed_in(
         .args(args)
         .env_clear()
         .envs(&env)
-        .current_dir(&home)
+        .current_dir(home)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -212,6 +202,24 @@ pub(crate) async fn device_signed_in(
         Some(1) => Some(false),
         _ => None,
     }
+}
+
+pub(crate) fn device_process_environment(
+    runtime: &str,
+    path: String,
+) -> Option<(PathBuf, std::collections::HashMap<String, String>)> {
+    device_folder(runtime)?;
+    let home = PathBuf::from(std::env::var_os("HOME")?);
+    let mut env = std::collections::HashMap::from([
+        ("PATH".into(), path),
+        ("HOME".into(), home.to_string_lossy().into_owned()),
+    ]);
+    env.extend(
+        device_environment(runtime)
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value.to_string_lossy().into_owned())),
+    );
+    Some((home, env))
 }
 
 pub(crate) fn credential_name(runtime: &str) -> &'static str {
@@ -244,6 +252,14 @@ fn profile_path(root: &Path, profile: &Value) -> PathBuf {
     root.join("engine-logins")
         .join(string(profile, "runtime"))
         .join(string(profile, "id"))
+}
+
+pub(crate) fn codex_config(state: &AppState, profile: &Value) -> Option<Vec<u8>> {
+    let root = data_root(state).ok()?;
+    let parent = runtime_directory(&root, "codex", false).ok()?;
+    let directory = child(&parent, string(profile, "id"), false).ok()?;
+    let file = operator_file::file_at(&directory, OsStr::new("config.toml")).ok()?;
+    operator_file::bounded_read(file, 1024 * 1024).ok()
 }
 
 fn public(root: &Path, profile: &Value) -> Result<Value> {

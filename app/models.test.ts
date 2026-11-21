@@ -22,7 +22,7 @@ test('model discovery validates catalog and never follows credential redirects',
   const address = server.address(); assert(address && typeof address !== 'string');
   const base = `http://127.0.0.1:${address.port}/v1`;
   const dir = mkdtempSync(join(tmpdir(), 'minarbot-models-'));
-  let app = await startApp({ database: join(dir, 'state.sqlite'), baseURL: base, apiKey: 'fixture-secret' }, { directory: dir, servers: [server] });
+  let app = await startApp({ database: join(dir, 'state.sqlite'), baseURL: base, apiKey: 'fixture-secret', defaultModel: 'z' }, { directory: dir, servers: [server] });
   try {
     const models = () => fetch(app.origin + '/api/models');
     const catalog = await models();
@@ -37,6 +37,13 @@ test('model discovery validates catalog and never follows credential redirects',
     assert.equal(redirected, false);
     mode = 'empty';
     assert.deepEqual(await (await models()).json(), { models: [] });
+    mode = 'ok';
+    const qualified = await fetch(app.origin + '/api/models?runtime=api&account=');
+    assert.equal(qualified.status, 200);
+    assert.deepEqual(await qualified.json(), {
+      models: ['a', 'z'],
+      catalog: [{ id: 'a', label: 'a' }, { id: 'z', label: 'z', default: true }],
+    });
     for (const baseURL of ['http://example.test/v1', 'https://user:password@example.test/v1']) {
       await assert.rejects(startApp({ database: join(dir, 'invalid.sqlite'), baseURL }), /Invalid provider address/);
     }
