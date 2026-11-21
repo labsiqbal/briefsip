@@ -193,8 +193,15 @@ async fn availability(state: &AppState, runtime: &str, deadline: tokio::time::In
     {
         return json!({"runtime":runtime,"available":false,"signedIn":null,"models":[],"version":version,"reason":"Installed Antigravity command has no ACP server. Install the standalone agy ACP CLI."});
     }
-    let (available, signed, models) = if ["codex", "claude"].contains(&runtime) {
-        (true, Value::Null, json!([]))
+    let (available, signed, models) = if crate::data::logins::device_runtime(runtime) {
+        let signed = tokio::time::timeout_at(
+            deadline,
+            crate::data::logins::device_signed_in(state, &path, runtime),
+        )
+        .await
+        .ok()
+        .flatten();
+        (true, signed.map_or(Value::Null, Value::Bool), json!([]))
     } else {
         tokio::time::timeout_at(
             deadline,

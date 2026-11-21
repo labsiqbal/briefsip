@@ -14,7 +14,7 @@ for (const broken of [false, true]) test(broken ? 'broken login shell keeps serv
   const directory = mkdtempSync(join(tmpdir(), 'minarbot-login-path-'));
   const bin = join(directory, 'bin'), shell = join(directory, 'login-shell');
   const inherited = join(directory, 'service-bin');
-  const probes = join(directory, 'probes'), environment = join(directory, 'harness-env.json');
+  const probes = join(directory, 'probes'), environment = join(directory, 'harness-env.json'), statusEnvironment = join(directory, 'status-env.json');
   const binary = rustBinary('minarbot-server', process.env.MINARBOT_RUST_BINARY);
   mkdirSync(bin);
   mkdirSync(inherited);
@@ -23,7 +23,9 @@ for (const broken of [false, true]) test(broken ? 'broken login shell keeps serv
   writeFileSync(join(directory, '.bash_profile'), `export PATH='${inherited}'\n`);
   writeFileSync(join(bin, 'codex'), `#!${process.execPath}
 import { writeFileSync } from 'node:fs';
-writeFileSync(${JSON.stringify(environment)}, JSON.stringify(process.env));
+const status = process.argv[2] === 'login' && process.argv[3] === 'status';
+writeFileSync(status ? ${JSON.stringify(statusEnvironment)} : ${JSON.stringify(environment)}, JSON.stringify(process.env));
+if (status) process.exit(1);
 console.log('codex fixture 1.0');
 `, { mode: 0o700 });
   writeFileSync(shell, broken
@@ -59,7 +61,7 @@ exec /bin/sh -c "$2"
     assert.equal(catalog.status, 200, stderr);
     const runtimes = await catalog.json();
     assert(!stderr.includes('synthetic-secret'));
-    const choices: { runtime: string; version: string | null; reason: string | null }[] = runtimes.choices;
+    const choices: { runtime: string; version: string | null; reason: string | null; signedIn: boolean | null }[] = runtimes.choices;
     const discovered = choices.filter(choice => !choice.reason?.includes('is missing from PATH.'));
     assert.deepEqual(discovered.map(choice => choice.runtime), broken ? [] : ['codex']);
     if (broken) {
@@ -77,6 +79,11 @@ exec /bin/sh -c "$2"
     assert(childEnv.HOME.startsWith(join(directory, 'minarbot-probe-')));
     assert.equal(childEnv.LANG, 'C');
     assert.equal(childEnv.TMPDIR, directory);
+    // The device sign-in check sees the service's own HOME and nothing else from its environment.
+    const statusEnv = JSON.parse(readFileSync(statusEnvironment, 'utf8'));
+    assert.deepEqual(Object.keys(statusEnv).sort(), ['CODEX_HOME', 'HOME', 'PATH']);
+    assert.equal(statusEnv.HOME, directory); assert.equal(statusEnv.CODEX_HOME, join(directory, '.codex'));
+    assert.equal(choices.find(choice => choice.runtime === 'codex')?.signedIn, false);
   } finally {
     await stop(child, closed);
     rmSync(directory, { recursive: true, force: true });

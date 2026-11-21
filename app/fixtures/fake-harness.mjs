@@ -6,6 +6,9 @@ import { createInterface } from 'node:readline';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 if (process.argv.includes('--version')) { console.log('fake-harness 1.0.0'); process.exit(0); }
+// Sign-in status: signed in when the engine folder holds the CLI's credential file.
+if (process.argv[2] === 'login' && process.argv[3] === 'status') process.exit(existsSync(`${process.env.CODEX_HOME}/auth.json`) ? 0 : 1);
+if (process.argv[2] === 'auth' && process.argv[3] === 'status') process.exit(existsSync(`${process.env.CLAUDE_CONFIG_DIR}/.credentials.json`) ? 0 : 1);
 for (const key of ['OPENAI_API_KEY','ANTHROPIC_API_KEY','COMPOSIO_API_KEY','MINARBOT_SCRIPT_TOKEN','NODE_OPTIONS','MINARBOT_HARNESS_CANARY']) assert.equal(process.env[key], key === 'ANTHROPIC_API_KEY' && process.env[key] === 'minarbot-no-key' ? 'minarbot-no-key' : undefined, `${key} leaked`);
 const codex = process.argv.includes('app-server');
 const arg = flag => { const at = process.argv.indexOf(flag); return at >= 0 ? process.argv[at + 1] : process.argv.find(value => value.startsWith(flag + '='))?.slice(flag.length + 1); };
@@ -94,7 +97,7 @@ async function streamGate(text) {
 for await (const line of createInterface({ input: process.stdin })) {
   const value = JSON.parse(line);
   if (codex) {
-    log({ method: value.method ?? 'response', home: process.env.HOME });
+    log({ method: value.method ?? 'response', home: process.env.HOME, codexHome: process.env.CODEX_HOME });
     if (value.method === 'initialize') send({ id: value.id, result: { userAgent: 'fake' } });
     if (['thread/start','thread/resume'].includes(value.method)) {
       mcpURL = value.params.config.mcp_servers.minarbot.url; assert.equal(value.params.cwd, process.cwd()); assert.match(value.params.config.mcp_servers.minarbot.url, /^http:\/\/127\.0\.0\.1:\d+\/mcp$/);

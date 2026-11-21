@@ -4,7 +4,7 @@ import { flushSync } from 'react-dom';
 import { Tabs as RadixTabs } from 'radix-ui';
 import { Brain, ChevronRight, Ellipsis, Globe, Terminal, Bot, Sparkles, Orbit, Wind, Circle, Code, Eclipse, Mountain } from 'lucide-react';
 import type { Runtime } from '../shared/runtime';
-import { engineLoginsPath, isLoginBinding, loginBinding, type EngineLogin, type RuntimeChoice } from './EnginesPanel';
+import { DEVICE_BINDING, engineLoginsPath, isLoginBinding, loginBinding, usesEngineSignIn, type EngineLogin, type RuntimeChoice } from './EnginesPanel';
 import { restoreAgentCreation, type AgentCreation } from '../shared/agent-create';
 import { AgentAvatar, AvatarEditor } from './AgentAvatar';
 import { MascotAvatar } from './ui/avatar-shapes';
@@ -81,7 +81,7 @@ export function AgentForm({ model, firstRun, focusComputer = false, profile: liv
   const [catalogStatus, setCatalogStatus] = useState('Loading models');
   useEffect(() => {
     if ((quick && model) || !['api', 'codex', 'claude'].includes(runtime)) { setModels([]); return; }
-    if (isLoginBinding(account)) { setModels([]); setCatalogStatus(''); return; }
+    if (usesEngineSignIn(account)) { setModels([]); setCatalogStatus(''); return; }
     let stopped = false;
     setModels([]); setCatalogStatus('Loading models');
     void api<{ models: string[] }>(`/api/models?account=${encodeURIComponent(account)}`).then(data => {
@@ -148,9 +148,15 @@ export function AgentForm({ model, firstRun, focusComputer = false, profile: liv
     label: `${login.runtime === 'codex' ? 'Codex' : 'Claude'} login: ${login.name}`,
     hint: login.signedIn ? undefined : 'Signed out',
   }));
+  const deviceOptions: SelectOption[] = runtime === 'codex' || runtime === 'claude' ? [{
+    value: DEVICE_BINDING,
+    label: `${harnessLabels[runtime]} on this machine`,
+    hint: runtimeChoices.find(choice => choice.runtime === runtime)?.signedIn === false ? 'Signed out' : undefined,
+  }] : [];
   const accountOptions: SelectOption[] = [
     ...(!accounts.some(item => item.id === '') ? [{ value: '', label: 'Default' }] : []),
-    ...(account && !accounts.some(item => item.id === account) && !loginOptions.some(item => item.value === account) ? [{ value: account, label: 'Unavailable account', hint: account }] : []),
+    ...(account && !accounts.some(item => item.id === account) && !loginOptions.some(item => item.value === account) && !deviceOptions.some(item => item.value === account) ? [{ value: account, label: 'Unavailable account', hint: account }] : []),
+    ...deviceOptions,
     ...accounts.map(item => ({ value: item.id, label: item.name.slice(0, 40), hint: item.configured ? undefined : 'Not connected' })),
     ...loginOptions,
   ];
@@ -171,7 +177,7 @@ export function AgentForm({ model, firstRun, focusComputer = false, profile: liv
   const modelFields = <>
     {profile?.runtime === 'api' && <Button type="button" onClick={event => { flushSync(() => setRuntime('codex')); event.currentTarget.form?.requestSubmit(); }} disabled={locked || busy || !runtimeChoices.some(choice => choice.runtime === 'codex' && choice.available && choice.enabled)}>Use Codex</Button>}
     <Field label="Run with" error={runtimeError}>
-      <span className="agent-profile__runtime"><Select label="Run with" valueLabel={runtime !== 'api' && !runtimeChoices.some(choice => choice.runtime === runtime) ? harnessLabels[runtime] : undefined} value={runtime} onChange={value => { runtimeChosen.current = true; setRuntime(value as Runtime); setHarnessModel(null); if (value !== runtime && isLoginBinding(account)) setAccount(''); }} disabled={locked || busy} options={[
+      <span className="agent-profile__runtime"><Select label="Run with" valueLabel={runtime !== 'api' && !runtimeChoices.some(choice => choice.runtime === runtime) ? harnessLabels[runtime] : undefined} value={runtime} onChange={value => { runtimeChosen.current = true; setRuntime(value as Runtime); setHarnessModel(null); if (value !== runtime && (isLoginBinding(account) || account === DEVICE_BINDING && value !== 'codex' && value !== 'claude')) setAccount(''); }} disabled={locked || busy} options={[
         { value: 'api', label: <span className="agent-profile__runtime-label"><Globe size={16} aria-hidden />API model</span> },
         ...runtimeChoices.map(choice => {
           const Icon = { codex: Terminal, claude: Sparkles, hermes: Wind, antigravity: Orbit, grok: Eclipse, pi: Circle, opencode: Code, gemini: Bot, kiro: Mountain }[choice.runtime];
@@ -209,7 +215,7 @@ export function AgentForm({ model, firstRun, focusComputer = false, profile: liv
     void create(event);
   }}>
     <Field label="Name" error={fieldErrors.name}><Input ref={nameInput} name="name" required maxLength={80} readOnly={locked || busy} value={avatarName} onChange={event => { setAvatarName(event.target.value); setFieldErrors({}); }} placeholder="Iris" autoFocus /></Field>
-    <Field label="Model" hint={runtime === 'api' ? 'API model' : harnessLabels[runtime]}><Input name="model" required maxLength={160} readOnly={locked || busy || !['api', 'codex'].includes(runtime) && !isLoginBinding(account)} value={modelValue} onChange={event => setModelValue(event.target.value)} /></Field>
+    <Field label="Model" hint={runtime === 'api' ? 'API model' : harnessLabels[runtime]}><Input name="model" required maxLength={160} readOnly={locked || busy || !['api', 'codex'].includes(runtime) && !usesEngineSignIn(account)} value={modelValue} onChange={event => setModelValue(event.target.value)} /></Field>
     {error && <Alert tone="error">{error}</Alert>}
     {invalid && <Alert tone="error" title="Recovery data could not be read" actions={<Button size="sm" onClick={() => void discardInvalid()}>Discard recovery data</Button>} />}
     <div className="k-row-actions">

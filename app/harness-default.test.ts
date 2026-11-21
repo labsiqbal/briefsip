@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, mkdirSync, mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -28,6 +28,34 @@ test('new agents default to Codex with a managed workspace; API agents keep runt
   } finally { await app.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 
+
+test("agents on this machine's Codex sign-in use the CLI folder without writing to it", async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-device-')), executable = join(directory, 'codex'), device = join(directory, 'device-codex');
+  writeFileSync(executable, `#!${process.execPath}\n` + readFileSync(new URL('./fixtures/fake-harness.mjs', import.meta.url), 'utf8').split('\n').slice(1).join('\n')); chmodSync(executable, 0o700);
+  mkdirSync(device); writeFileSync(join(device, 'auth.json'), JSON.stringify({ tokens: { access_token: 'synthetic-device-access', refresh_token: 'synthetic-device-refresh' } }), { mode: 0o600 });
+  // The server finds the device sign-in through the environment it inherits, like the CLI does.
+  const previous = process.env.CODEX_HOME; process.env.CODEX_HOME = device;
+  let app: Awaited<ReturnType<typeof startApp>> | undefined;
+  try {
+    app = await startApp({ database: join(directory, 'state.sqlite'), harness: { executables: { codex: executable } } });
+    const origin = app.origin;
+    const request = async (path: string, body?: unknown) => { const response = await fetch(origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); return { response, data: await response.json() }; };
+    const api = async (path: string, body?: unknown) => { const { response, data } = await request(path, body); assert(response.ok, JSON.stringify(data)); return data; };
+    assert.equal((await api('/api/runtimes')).choices.find((choice: { runtime: string }) => choice.runtime === 'codex').signedIn, true);
+    const rejected = await request('/api/agents', { id: randomUUID(), runtime: 'api', name: 'Wrong', model: 'default', providerAccount: 'device', instructions: 'Help.' });
+    assert.equal(rejected.response.status, 400); assert.match(rejected.data.error, /only with Codex or Claude Code/);
+    const agent = await api('/api/agents', { id: randomUUID(), runtime: 'codex', name: 'Coder', model: 'default', providerAccount: 'device', instructions: 'Help.' });
+    assert.equal(agent.provider_account, 'device');
+    assert.equal((await api('/api/agents')).agents.find((item: { id: string }) => item.id === agent.id).provider_available, true);
+    const path = `/api/agents/${agent.id}`, id = randomUUID(); await api(path + '/turns', { id, text: 'Hello' });
+    let row;
+    for (let n = 0; n < 300; n++) { row = (await api(path + '/turns')).find((item: { id: string }) => item.id === id); if (['done', 'failed'].includes(row.status)) break; await new Promise(resolve => setTimeout(resolve, 10)); }
+    assert.equal(row.status, 'done', row.error);
+    const start = readFileSync(join(directory, 'agent-workspaces', agent.id, 'fake-log.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line)).find(item => item.method === 'thread/start');
+    assert.equal(start.codexHome, device); assert.notEqual(start.home, process.env.HOME); assert(!start.home.startsWith(device));
+    assert.deepEqual(readdirSync(device), ['auth.json']);
+  } finally { await app?.close(); if (previous === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = previous; rmSync(directory, { recursive: true, force: true }); }
+});
 
 test('provider isolation, account home rotation and MCP shell approval boundaries', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'minarbot-provider-home-')), executable = join(directory, 'codex');

@@ -15,7 +15,7 @@ Minarbot is free and open source under the [Apache License 2.0](LICENSE).
 - **Projects** group agents around one piece of work. **Sections** inside a project are group chats for different kinds of work, such as design or backend.
 
 **Agent engines**
-- Coding harnesses: Codex, Claude Code, and ACP engines (Hermes, Antigravity, Grok, Pi, Gemini, OpenCode). Signed-in Codex and Claude Code logins can be reused.
+- Coding harnesses: Codex, Claude Code, and ACP engines (Hermes, Antigravity, Grok, Pi, Gemini, OpenCode). First run picks up Codex or Claude Code already signed in on the machine, so no API key is needed.
 - Plain model APIs: OpenAI-compatible, Anthropic and Gemini accounts, managed in Settings.
 - Shared base instructions and a self-check before an agent reports a task as done.
 - Web search and fetch for every agent, through a search backend you choose (for example a local SearXNG).
@@ -43,7 +43,7 @@ Minarbot runs as a local server you open in the browser. A one-line installer is
 
 If your data directory was created by Minarbot 0.14.0 or earlier, move it aside before installing. This release requires a fresh data directory.
 
-**Requirements:** Linux x86_64, `curl`, `tar` and `sha256sum`. To use agents, install and sign in to at least one engine (for example [Codex CLI](https://developers.openai.com/codex/cli) or [Claude Code](https://claude.com/product/claude-code)), or add a model API key in Settings after the first start.
+**Requirements:** Linux x86_64, `curl`, `tar` and `sha256sum`. To use agents, install and sign in to at least one engine (for example [Codex CLI](https://developers.openai.com/codex/cli) or [Claude Code](https://claude.com/product/claude-code)), or add a model API key in Settings after the first start. An agent on the machine's Codex sign-in also uses Codex's own config, such as its MCP servers and rules. Chats from an agent on either sign-in appear in that CLI's history.
 
 1. Download the latest release and check it against `latest.json`:
 

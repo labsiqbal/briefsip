@@ -56,6 +56,11 @@ pub fn binding_blocked_reason(
     binding: &str,
     accounts: &[providers::Account],
 ) -> Result<Option<&'static str>> {
+    if binding == super::logins::DEVICE {
+        return Ok(
+            (!super::logins::device_runtime(runtime)).then_some(super::logins::DEVICE_RUNTIME_ONLY)
+        );
+    }
     if binding.starts_with(super::logins::PREFIX) {
         let profile = super::logins::bound(db, binding)?;
         return Ok(super::logins::blocked_reason(runtime, profile.as_ref()));
@@ -256,7 +261,11 @@ fn account(v: &Value) -> Result<Option<&str>> {
         .transpose()
 }
 fn validate_account(state: &AppState, db: &Connection, runtime: &str, binding: &str) -> Result<()> {
-    if binding.starts_with(super::logins::PREFIX) {
+    if binding == super::logins::DEVICE {
+        if !super::logins::device_runtime(runtime) {
+            return Err(error(400, super::logins::DEVICE_RUNTIME_ONLY));
+        }
+    } else if binding.starts_with(super::logins::PREFIX) {
         let profile = super::logins::bound(db, binding)?
             .ok_or_else(|| error(400, "Engine login profile not found."))?;
         if profile["runtime"] != runtime {
@@ -496,7 +505,9 @@ pub fn edit(state: &AppState, db: &Connection, id: &str, v: &Value) -> Result<Va
     let saved_binding = string(&current, "provider_account");
     let selected_runtime = runtime.unwrap_or_else(|| string(&current, "runtime"));
     if let Some(binding) = account.or_else(|| {
-        (runtime.is_some() && saved_binding.starts_with(super::logins::PREFIX))
+        (runtime.is_some()
+            && (saved_binding.starts_with(super::logins::PREFIX)
+                || saved_binding == super::logins::DEVICE))
             .then_some(saved_binding)
     }) {
         validate_account(state, db, selected_runtime, binding)?;
@@ -863,6 +874,24 @@ pub fn scripts(state: &AppState, db: &Connection, id: &str, v: &Value, get: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn device_sign_in_binds_only_codex_and_claude() -> Result<()> {
+        let db = Connection::open_in_memory()?;
+        for (runtime, runnable) in [
+            ("codex", true),
+            ("claude", true),
+            ("api", false),
+            ("pi", false),
+        ] {
+            assert_eq!(
+                binding_blocked_reason(&db, runtime, super::super::logins::DEVICE, &[])?.is_none(),
+                runnable,
+                "{runtime}"
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn device_binding_uses_only_the_reported_account() {

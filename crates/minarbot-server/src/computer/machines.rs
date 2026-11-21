@@ -990,7 +990,9 @@ async fn peer_agents(
             let mut bindings = serde_json::Map::new();
             for agent in &roster {
                 let binding = text(agent, "provider_account");
-                if binding.starts_with(crate::data::logins::PREFIX) {
+                if binding.starts_with(crate::data::logins::PREFIX)
+                    || binding == crate::data::logins::DEVICE
+                {
                     continue;
                 }
                 if local_agents::binding_blocked_reason(

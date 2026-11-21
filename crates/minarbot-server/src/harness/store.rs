@@ -73,6 +73,7 @@ fn home(
     runtime: &str,
     account: Option<&data::providers::Account>,
     login: Option<(&str, &[u8])>,
+    device: Option<&Path>,
     model: &str,
     fingerprint: String,
 ) -> Result<Home> {
@@ -105,7 +106,17 @@ fn home(
         fingerprint,
         login_id: login.map(|(id, _)| id.to_owned()),
     };
-    if runtime == "codex" {
+    if let Some(folder) = device {
+        // The device sign-in lives in the engine's own folder. Point the engine at
+        // it and write nothing there; the CLI's own config and rules apply.
+        let variable = if runtime == "codex" {
+            "CODEX_HOME"
+        } else {
+            "CLAUDE_CONFIG_DIR"
+        };
+        h.environment
+            .insert(variable.into(), folder.to_string_lossy().into_owned());
+    } else if runtime == "codex" {
         let codex = path.join(".codex");
         DirBuilder::new()
             .mode(0o700)
@@ -1339,7 +1350,7 @@ pub async fn run(
     messages: &[Value],
     phase: &str,
 ) -> Result<String> {
-    let (turn, profile, binding, account, login) = {
+    let (turn, profile, binding, account, login, device) = {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
         let db = &guard.connection;
         let turn = one(
@@ -1352,7 +1363,19 @@ pub async fn run(
         let binding = turns::harness::workspace(state, db, &turn)?
             .ok_or_else(|| error(403, "Coding harness requires a host workspace folder."))?;
         let provider = string(&profile, "provider_account");
-        let (account, login) = if provider.starts_with(data::logins::PREFIX) {
+        let (account, login, device) = if provider == data::logins::DEVICE {
+            let runtime = string(&profile, "runtime");
+            if !data::logins::device_runtime(runtime) {
+                return Err(error(503, data::logins::DEVICE_RUNTIME_ONLY));
+            }
+            let folder = data::logins::device_folder(runtime).ok_or_else(|| {
+                error(
+                    503,
+                    "This machine's engine folder could not be found. Sign in to the CLI on this machine.",
+                )
+            })?;
+            (None, None, Some(folder))
+        } else if provider.starts_with(data::logins::PREFIX) {
             let selected = data::logins::bound(db, provider)?;
             if let Some(reason) =
                 data::logins::blocked_reason(string(&profile, "runtime"), selected.as_ref())
@@ -1369,6 +1392,7 @@ pub async fn run(
             (
                 None,
                 Some((string(&selected, "id").to_owned(), credentials)),
+                None,
             )
         } else {
             let account = data::providers::accounts(state)?
@@ -1380,9 +1404,9 @@ pub async fn run(
                         "The selected provider account is not configured. Check Settings > Providers.",
                     )
                 })?;
-            (Some(account), None)
+            (Some(account), None, None)
         };
-        (turn, profile, binding, account, login)
+        (turn, profile, binding, account, login, device)
     };
     let runtime = string(&profile, "runtime");
     let executable = super::executable(state, runtime);
@@ -1410,6 +1434,8 @@ pub async fn run(
             format!("{:x}", Sha256::digest(bytes)),
             model
         ])
+    } else if let Some(folder) = &device {
+        json!([data::logins::DEVICE, folder, model])
     } else {
         return Err(Failure::storage());
     }
@@ -1420,7 +1446,7 @@ pub async fn run(
     };
     let mut env = state.config.harness.environment.clone();
     env.extend(project_environment.clone());
-    if login.is_some() {
+    if login.is_some() || device.is_some() {
         for variable in [
             "OPENAI_API_KEY",
             "CODEX_API_KEY",
@@ -1466,6 +1492,7 @@ pub async fn run(
                         login
                             .as_ref()
                             .map(|(id, bytes)| (id.as_str(), bytes.as_slice())),
+                        device.as_deref(),
                         model,
                         fingerprint,
                     )?,
@@ -1538,7 +1565,7 @@ pub async fn run(
     if mise {
         process::configure_mise(&mut env);
     }
-    let model = if login.is_some() && model == "default" {
+    let model = if (login.is_some() || device.is_some()) && model == "default" {
         ""
     } else {
         model
@@ -1547,6 +1574,11 @@ pub async fn run(
     secrets.extend(account.and_then(|account| account.key));
     if let Some((_, bytes)) = login {
         secrets.extend(data::logins::secrets(runtime, &bytes));
+    }
+    if device.is_some() {
+        if let Some(bytes) = data::logins::device_credentials(runtime) {
+            secrets.extend(data::logins::secrets(runtime, &bytes));
+        }
     }
     {
         let guard = state.database.lock().map_err(|_| Failure::storage())?;
@@ -1734,6 +1766,7 @@ while read -r request; do :; done
             "codex",
             Some(&account),
             None,
+            None,
             &account.model,
             String::new(),
         )
@@ -1764,10 +1797,28 @@ while read -r request; do :; done
         drop(session);
         assert!(!path.exists());
         account.base = "https://user:password@example.test/v1".into();
-        assert!(home(&root, "codex", Some(&account), None, "x", String::new()).is_err());
+        assert!(home(
+            &root,
+            "codex",
+            Some(&account),
+            None,
+            None,
+            "x",
+            String::new()
+        )
+        .is_err());
         account.base = "https://example.test/v1".into();
         account.family = "anthropic".into();
-        assert!(home(&root, "codex", Some(&account), None, "x", String::new()).is_err());
+        assert!(home(
+            &root,
+            "codex",
+            Some(&account),
+            None,
+            None,
+            "x",
+            String::new()
+        )
+        .is_err());
         assert!(std::fs::read_dir(root)?.next().is_none());
         Ok(())
     }
@@ -1798,6 +1849,7 @@ while read -r request; do :; done
                 runtime,
                 None,
                 Some(("login", bytes)),
+                None,
                 "",
                 String::new(),
             )
@@ -1820,6 +1872,32 @@ while read -r request; do :; done
             );
             assert!(!session.environment.contains_key("MINARBOT_PROVIDER_KEY"));
             assert!(!session.environment.contains_key("ANTHROPIC_API_KEY"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn device_login_home_points_at_the_engine_folder_and_writes_nothing_there(
+    ) -> crate::db::Result<()> {
+        let scratch = process::ProbeHome::new()?;
+        let database = scratch.0.join("state.sqlite");
+        let _lease = config::prepare_homes(&database)?;
+        let root = config::homes_root(&database)?;
+        for (runtime, variable) in [("codex", "CODEX_HOME"), ("claude", "CLAUDE_CONFIG_DIR")] {
+            let folder = scratch.0.join(format!("device-{runtime}"));
+            std::fs::create_dir(&folder)?;
+            let session = home(&root, runtime, None, None, Some(&folder), "", String::new())
+                .map_err(|failure| failure.message)?;
+            assert_eq!(session.environment[variable], folder.to_string_lossy());
+            assert_eq!(session.environment["HOME"], session.path.to_string_lossy());
+            assert!(std::fs::read_dir(&folder)?.next().is_none());
+            assert!(std::fs::read_dir(&session.path)?.next().is_none());
+            assert!(!session.environment.contains_key("MINARBOT_PROVIDER_KEY"));
+            assert!(!session.environment.contains_key("ANTHROPIC_API_KEY"));
+            let path = session.path.clone();
+            drop(session);
+            assert!(!path.exists());
+            assert!(folder.exists());
         }
         Ok(())
     }

@@ -29,6 +29,9 @@ export type EngineLogin = {
 export const engineLoginsPath = '/api/engine-logins';
 export const loginBinding = (login: EngineLogin) => `login:${login.id}`;
 export const isLoginBinding = (binding: string) => binding.startsWith('login:');
+// Binds Codex or Claude Code to the sign-in the CLI already has on this machine. See data/logins DEVICE.
+export const DEVICE_BINDING = 'device';
+export const usesEngineSignIn = (binding: string) => isLoginBinding(binding) || binding === DEVICE_BINDING;
 const supportsLogin = (runtime: string): runtime is EngineLogin['runtime'] => runtime === 'claude' || runtime === 'codex';
 const focusHeading = (heading: HTMLHeadingElement | null) => heading?.focus();
 const message = (error: unknown) => error instanceof Error ? error.message : 'Request failed. Try again.';

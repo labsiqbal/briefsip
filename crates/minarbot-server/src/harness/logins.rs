@@ -19,6 +19,12 @@ use std::{
 use tokio::process::Command;
 
 pub(crate) const PREFIX: &str = "login:";
+/// Binds a Codex or Claude Code agent to the sign-in already set up on this
+/// machine. The engine then reads its own config folder, shared with the CLI,
+/// so token refreshes by either side stay in one file under one lock.
+pub(crate) const DEVICE: &str = "device";
+pub(crate) const DEVICE_RUNTIME_ONLY: &str =
+    "This machine's sign-in works only with Codex or Claude Code.";
 pub(crate) const CODEX_CONFIG: &[u8] = b"cli_auth_credentials_store = \"file\"\n";
 
 const SELECT: &str = "SELECT id,runtime,name,created,checked_at,signed_in FROM engine_logins";
@@ -99,6 +105,85 @@ pub(crate) fn credentials(state: &AppState, profile: &Value) -> Result<Option<Ve
             409,
             "Engine login credentials must be a regular file in the private profile directory.",
         )),
+    }
+}
+
+pub(crate) fn device_runtime(runtime: &str) -> bool {
+    matches!(runtime, "codex" | "claude")
+}
+
+/// The engine's own config folder on this machine, where the CLI keeps its sign-in.
+pub(crate) fn device_folder(runtime: &str) -> Option<PathBuf> {
+    if !device_runtime(runtime) {
+        return None;
+    }
+    let (variable, _) = runtime_file(runtime);
+    std::env::var_os(variable)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            let folder = if runtime == "codex" {
+                ".codex"
+            } else {
+                ".claude"
+            };
+            std::env::var_os("HOME").map(|home| Path::new(&home).join(folder))
+        })
+        .filter(|path| path.is_absolute())
+}
+
+/// Reads the device sign-in so harness output can redact its tokens.
+pub(crate) fn device_credentials(runtime: &str) -> Option<Vec<u8>> {
+    let path = device_folder(runtime)?.join(credential_name(runtime));
+    let file = File::open(path).ok()?;
+    operator_file::bounded_read(file, 1024 * 1024).ok()
+}
+
+/// Whether Codex or Claude Code is signed in on this machine, using the CLI's own
+/// status command. `None` when the check cannot run or gives no clear answer.
+pub(crate) async fn device_signed_in(
+    state: &AppState,
+    executable: &Path,
+    runtime: &str,
+) -> Option<bool> {
+    let folder = device_folder(runtime)?;
+    let home = std::env::var_os("HOME")?;
+    let (variable, _) = runtime_file(runtime);
+    let args: &[&str] = if runtime == "codex" {
+        &["login", "status"]
+    } else {
+        &["auth", "status", "--json"]
+    };
+    let mut child = Command::new(executable)
+        .args(args)
+        .env_clear()
+        .env("PATH", crate::harness::path(state))
+        .env("HOME", &home)
+        .env(variable, &folder)
+        .current_dir(&home)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .kill_on_drop(true)
+        .spawn()
+        .ok()?;
+    let status = match tokio::time::timeout(Duration::from_secs(10), child.wait()).await {
+        Ok(status) => status.ok()?,
+        Err(_) => {
+            if let Some(pid) = child
+                .id()
+                .and_then(|pid| rustix::process::Pid::from_raw(pid as i32))
+            {
+                let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+            }
+            return None;
+        }
+    };
+    match status.code() {
+        Some(0) => Some(true),
+        Some(1) => Some(false),
+        _ => None,
     }
 }
 
