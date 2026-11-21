@@ -98,7 +98,7 @@ export function Combobox({ value, onChange, suggestions, name, placeholder, read
       <Popover.Content className="k-pop k-combobox__content" align="start" sideOffset={6} onOpenAutoFocus={event => event.preventDefault()} onInteractOutside={event => { if ((event.target as HTMLElement | null)?.id === field?.id) event.preventDefault(); }}>
         <ul id={listId} role="listbox" className="k-combobox__list">
           {items.map((item, index) => <li key={item.value} id={`${listId}-${index}`} role="option" aria-selected={item.value === value} className={cx('k-menu__item', index === active && 'is-active')} onMouseDown={event => event.preventDefault()} onMouseEnter={() => setActive(index)} onClick={() => choose(item)}>
-            <span className="k-combobox__value">{item.label}</span>{item.value === value && <Check size={14} aria-hidden />}
+            <span className={cx('k-combobox__value', item.label !== item.value && 'is-label')}>{item.label}</span>{item.value === value && <Check size={14} aria-hidden />}
           </li>)}
           {!items.length && emptyText && <li className="k-combobox__empty">{emptyText}</li>}
         </ul>

@@ -228,35 +228,6 @@ impl Process {
         })
     }
 
-    pub fn launch_readonly(
-        path: &Path,
-        args: &[String],
-        cwd: &Path,
-        env: &HashMap<String, String>,
-    ) -> Result<Self> {
-        let cwd = cwd.to_str().ok_or_else(Failure::storage)?;
-        let executable = path.to_str().ok_or_else(Failure::storage)?;
-        let mut sandbox = vec![
-            "--die-with-parent".into(),
-            "--ro-bind".into(),
-            "/".into(),
-            "/".into(),
-            "--dev".into(),
-            "/dev".into(),
-            "--proc".into(),
-            "/proc".into(),
-            "--ro-bind-try".into(),
-            "/dev/shm".into(),
-            "/dev/shm".into(),
-            "--bind".into(),
-            cwd.into(),
-            cwd.into(),
-            "--".into(),
-            executable.into(),
-        ];
-        sandbox.extend_from_slice(args);
-        Self::launch(Path::new("/usr/bin/bwrap"), &sandbox, Path::new(cwd), env)
-    }
     pub fn record_stderr(&mut self, state: &AppState, call: i64, secrets: &[String]) {
         self.stderr_destination = Some((state.clone(), call, secrets.to_vec()));
     }

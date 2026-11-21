@@ -146,46 +146,18 @@ async fn device_models(
         .ok_or_else(|| error(503, "This machine's engine folder could not be found."))?;
     mise_environment(executable, &mut env);
     env.insert("TMPDIR".into(), scratch.0.to_string_lossy().into_owned());
-    if env.contains_key("MISE_STATE_DIR") {
-        env.insert(
-            "MISE_STATE_DIR".into(),
-            scratch.0.join("mise-state").to_string_lossy().into_owned(),
-        );
-    }
 
-    // Codex app-server needs writable state even for model/list. Copy only
-    // catalog and sign-in inputs to a private directory inside the probe.
-    let config = if let Some(folder) = env.get("CODEX_HOME") {
-        let local = scratch.0.join(".codex");
-        std::fs::create_dir(&local).map_err(|_| launch_error(runtime))?;
-        let directory = Path::new(folder)
-            .canonicalize()
-            .ok()
-            .and_then(|folder| operator_file::open_directory(&folder).ok());
-        let mut config = None;
-        for (name, limit) in [
-            ("auth.json", 1024 * 1024),
-            ("config.toml", 1024 * 1024),
-            ("models_cache.json", 16 * 1024 * 1024),
-            ("installation_id", 4096),
-        ] {
-            if let Some(bytes) = directory
-                .as_ref()
-                .and_then(|dir| operator_file::file_at(dir, OsStr::new(name)).ok())
-                .and_then(|file| operator_file::bounded_read(file, limit).ok())
-            {
-                store::private(&local.join(name), &bytes).map_err(|_| launch_error(runtime))?;
-                if name == "config.toml" {
-                    config = Some(bytes);
-                }
-            }
-        }
-        env.insert("CODEX_HOME".into(), local.to_string_lossy().into_owned());
-        config
-    } else {
-        None
-    };
-    let process = Process::launch_readonly(executable, &args(runtime), &scratch.0, &env)
+    // Run against the engine's own folder, as a device turn does. The engine
+    // may refresh its sign-in while listing models; OpenAI rotates refresh
+    // tokens, so a copy or a read-only view would lose the rotated token and
+    // sign the CLI out on this machine.
+    let config = env.get("CODEX_HOME").and_then(|folder| {
+        let folder = Path::new(folder).canonicalize().ok()?;
+        let directory = operator_file::open_directory(&folder).ok()?;
+        let file = operator_file::file_at(&directory, OsStr::new("config.toml")).ok()?;
+        operator_file::bounded_read(file, 1024 * 1024).ok()
+    });
+    let process = Process::launch(executable, &args(runtime), &scratch.0, &env)
         .map_err(|_| launch_error(runtime))?;
     Ok((
         probe_process(
@@ -231,7 +203,7 @@ async fn login_models(
     env.extend(home.environment.clone());
     env.insert("TMPDIR".into(), scratch.0.to_string_lossy().into_owned());
     mise_environment(executable, &mut env);
-    let process = Process::launch_readonly(executable, &args(runtime), &scratch.0, &env)
+    let process = Process::launch(executable, &args(runtime), &scratch.0, &env)
         .map_err(|_| launch_error(runtime))?;
     Ok((
         probe_process(

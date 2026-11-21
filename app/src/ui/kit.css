@@ -71,6 +71,7 @@ input, textarea { caret-color: var(--color-brand); }
 .k-combobox__content { width: var(--radix-popover-trigger-width); max-height: min(300px, var(--radix-popover-content-available-height)); overflow-y: auto; }
 .k-combobox__list { margin: 0; padding: 0; list-style: none; }
 .k-combobox__value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono-stack); font-size: 12.5px; }
+.k-combobox__value.is-label { font-family: inherit; font-size: 13px; }
 .k-combobox__empty { padding: 8px 10px; font-size: 13px; color: var(--color-text-tertiary); }
 .k-menu__item {
   display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 32px; padding: 6px 10px; border-radius: 8px;
