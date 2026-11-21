@@ -1,3 +1,4 @@
+use minarbot_launcher::data_format;
 use rusqlite::{functions::FunctionFlags, Connection, OptionalExtension};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -14,7 +15,6 @@ mod sql {
 }
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 pub const SCHEMA_VERSION: i64 = 6;
-const DATA_FORMAT_ID: i64 = 0x4d4e5231; // MNR1
 const PROVIDER_ACCOUNTS: &str = include_str!("data/provider-accounts.sql");
 const CANONICAL_INDEXES: &str = concat!(
     include_str!("files/indexes.sql"),
@@ -62,13 +62,12 @@ pub fn open(path: &Path, canonical_mode: bool, now: i64) -> Result<Database> {
     connection.set_prepared_statement_cache_capacity(128);
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
     let guard = server_guard(path)?;
-    let marker: i64 = connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
-    if marker != DATA_FORMAT_ID {
+    if !data_format::is_marked(&connection)? {
         let pages: i64 = connection.pragma_query_value(None, "page_count", |row| row.get(0))?;
         if pages != 0 {
-            return Err("This data was created by an older Minarbot version. Install fresh: https://github.com/labsiqbal/minarbot#install".into());
+            return Err(data_format::UNMARKED.into());
         }
-        connection.pragma_update(None, "application_id", DATA_FORMAT_ID)?;
+        data_format::mark(&connection)?;
     }
     connection.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000")?;
     if canonical_mode {
@@ -425,9 +424,7 @@ mod tests {
         let error = open(&old, true, 0)
             .err()
             .ok_or("Unmarked database must be rejected")?;
-        assert!(error
-            .to_string()
-            .contains("This data was created by an older Minarbot version"));
+        assert_eq!(error.to_string(), data_format::UNMARKED);
         assert_eq!(fs::read(&old)?, before);
         for canonical in [false, true] {
             let fresh = directory.join(format!("fresh-{canonical}.sqlite"));

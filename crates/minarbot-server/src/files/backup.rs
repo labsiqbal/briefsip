@@ -47,7 +47,7 @@ pub async fn handle(state: &AppState, req: Request) -> Result<Response> {
         .mode(0o700)
         .create(&snapshot.directory)
         .map_err(|_| Failure::storage())?;
-    let file = snapshot.directory.join("minarbot.sqlite");
+    let file = snapshot.directory.join(minarbot_launcher::DATABASE_NAME);
     OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -60,9 +60,10 @@ pub async fn handle(state: &AppState, req: Request) -> Result<Response> {
             .backup(rusqlite::DatabaseName::Main, &file, None)?;
         let backup = Connection::open(&file)?;
         backup.execute_batch("CREATE TABLE IF NOT EXISTS minarbot_backup(format TEXT NOT NULL,version INTEGER NOT NULL,created TEXT NOT NULL) STRICT;DELETE FROM minarbot_backup;")?;
+        let (format, version) = minarbot_launcher::data_format::WORKSPACE_BACKUP;
         backup.execute(
-            "INSERT INTO minarbot_backup VALUES('minarbot-workspace',1,?)",
-            [timestamp(&backup, state.config.now())?],
+            "INSERT INTO minarbot_backup VALUES(?,?,?)",
+            rusqlite::params![format, version, timestamp(&backup, state.config.now())?],
         )?;
     }
     let bytes = fs::read(&file).map_err(|_| Failure::storage())?;

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { markCurrentTestSchema, testDatabase } from './test-support/database.ts';
+import { markMinarbotData, testDatabase } from './test-support/database.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -65,7 +65,7 @@ test('v4 sync migration preserves v3 record identities and rolls back conflictin
 test('additive role migration preserves existing local and canonical databases and defaults empty', async () => {
   const dir = mkdtempSync(join(process.cwd(), 'node_modules/.role-migration-')), database = join(dir, 'legacy.sqlite');
   const db = testDatabase(database), agent = randomUUID();
-  markCurrentTestSchema(db);
+  markMinarbotData(db);
   db.exec('CREATE TABLE agents(id TEXT PRIMARY KEY,name TEXT NOT NULL,model TEXT NOT NULL,instructions TEXT NOT NULL) STRICT');
   db.prepare('INSERT INTO agents VALUES (?,?,?,?)').run(agent, 'Legacy', 'fixture', 'Preserve'); db.close();
   let app: Awaited<ReturnType<typeof startApp>> | undefined;

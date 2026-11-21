@@ -3,7 +3,7 @@ import { createClerkClient } from '@clerk/backend';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { testDatabase } from './test-support/database.ts';
+import { markMinarbotData, testDatabase } from './test-support/database.ts';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -163,8 +163,19 @@ test('operator CLI restores a canonical backup read-only without script credenti
     assert.equal(result.exitCode,0);assert.equal(result.database,target);assert.equal(result.state,'read_only_recovery');
     const restored=testDatabase(target);try{assert.equal(restored.prepare('SELECT serving_state FROM authority_state').get()!.serving_state,'read_only_recovery');}finally{restored.close();}
     assert.equal(restoreCommand(['--read-only',backup.file,'--db',target,'--activate']).exitCode, 2);
-    const legacy=join(dir,'legacy.sqlite'),old=testDatabase(legacy);old.exec("CREATE TABLE minarbot_backup(format TEXT,version INTEGER); INSERT INTO minarbot_backup VALUES ('minarbot-workspace',1)");old.close();
+    const legacy=join(dir,'legacy.sqlite'),old=testDatabase(legacy);markMinarbotData(old);old.exec("CREATE TABLE minarbot_backup(format TEXT,version INTEGER); INSERT INTO minarbot_backup VALUES ('minarbot-workspace',1)");old.close();
     const invalid=join(dir,'invalid.sqlite');assert.throws(()=>checkedRestore(['--read-only',legacy,'--db',invalid]),/canonical backup/);assert(!existsSync(invalid));
+  }finally{backup.cleanup();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('operator CLI refuses a backup without the Minarbot data marker and leaves no target',async()=>{
+  const dir=mkdtempSync(join(tmpdir(),'minarbot-restore-unmarked-')),db=testDatabase(join(dir,'source.sqlite'));initializeCanonicalSchema(db);
+  const backup=await workspaceSnapshot(db);db.close();
+  try{
+    const old=testDatabase(backup.file);old.exec('PRAGMA application_id=0');old.close();
+    const target=join(dir,'restored.sqlite');
+    assert.throws(()=>checkedRestore(['--read-only',backup.file,'--db',target]),/does not carry the Minarbot data marker/);
+    assert(!existsSync(target));
   }finally{backup.cleanup();rmSync(dir,{recursive:true,force:true});}
 });
 

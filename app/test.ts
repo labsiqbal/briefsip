@@ -1,5 +1,5 @@
 import { test } from 'node:test';
-import { markCurrentTestSchema, testDatabase } from './test-support/database.ts';
+import { markMinarbotData, testDatabase } from './test-support/database.ts';
 import assert from 'node:assert/strict';
 import { createServer, get, request as httpRequest } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -379,7 +379,7 @@ test('legacy agent migration preserves create retries across later edits', async
   const database = join(dir, 'state.sqlite');
   const original = { id: randomUUID(), name: 'Legacy', model: 'fixture', instructions: 'Original instructions.' };
   const db = testDatabase(database);
-  markCurrentTestSchema(db);
+  markMinarbotData(db);
   db.exec('CREATE TABLE agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, model TEXT NOT NULL, instructions TEXT NOT NULL) STRICT');
   db.prepare('INSERT INTO agents VALUES (?,?,?,?)').run(original.id, original.name, original.model, original.instructions);
   const legacyChannel = { id: randomUUID(), name: 'Legacy room', instructions: 'Original purpose.', lead: original.id, members: [original.id] };

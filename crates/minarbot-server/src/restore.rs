@@ -59,6 +59,9 @@ pub fn workspace(source: &Path, target: &Path, canonical_only: bool) -> db::Resu
     connection.execute_batch(
         "PRAGMA trusted_schema=OFF; PRAGMA foreign_keys=ON; PRAGMA journal_mode=DELETE;",
     )?;
+    if !minarbot_launcher::data_format::is_marked(&connection)? {
+        return Err(minarbot_launcher::data_format::UNMARKED.into());
+    }
     let manifest = connection.query_row(
         "SELECT format,version,(SELECT count(*) FROM minarbot_backup) FROM minarbot_backup",
         [],
@@ -70,13 +73,19 @@ pub fn workspace(source: &Path, target: &Path, canonical_only: bool) -> db::Resu
             ))
         },
     )?;
-    let canonical = manifest.0 == "minarbot-canonical-v6" && manifest.1 == 6 && manifest.2 == 1;
+    let (canonical_format, canonical_version) = minarbot_launcher::data_format::CANONICAL_BACKUP;
+    let (workspace_format, workspace_version) = minarbot_launcher::data_format::WORKSPACE_BACKUP;
+    let canonical =
+        manifest.0 == canonical_format && manifest.1 == canonical_version && manifest.2 == 1;
     if !canonical && canonical_only {
         return Err("Read-only restore requires a canonical backup.".into());
     }
     let has_authority = table(&connection, "authority_state").map_err(|e| e.message)?;
     if canonical != has_authority
-        || !canonical && (manifest.0 != "minarbot-workspace" || manifest.1 != 1 || manifest.2 != 1)
+        || !canonical
+            && (manifest.0 != workspace_format
+                || manifest.1 != workspace_version
+                || manifest.2 != 1)
     {
         return Err("Unsupported Minarbot backup format.".into());
     }

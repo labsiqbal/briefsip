@@ -1,4 +1,5 @@
 use crate::{files::*, timestamp, Result};
+use minarbot_launcher::data_format;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use std::{fs, os::unix::fs::MetadataExt, path::Path, time::Duration};
 
@@ -33,10 +34,11 @@ pub fn run(command: &str, database: &Path, destination: &Path) -> Result<()> {
                 })?;
             let integrity: String =
                 snapshot.query_row("PRAGMA integrity_check", [], |r| r.get(0))?;
-            if !matches!(
-                (format.as_str(), version),
-                ("minarbot-workspace", 1) | ("minarbot-canonical-v6", 6)
-            ) || integrity != "ok"
+            // The launcher took this snapshot from the live database itself, so it
+            // carries whatever marker that database had; refusing it here would only
+            // block the rollback. Backups from elsewhere are checked by the server.
+            if !data_format::is_backup(&format, version)
+                || integrity != "ok"
                 || snapshot.prepare("PRAGMA foreign_key_check")?.exists([])?
             {
                 return Err("Invalid update snapshot.".into());
@@ -64,9 +66,10 @@ fn snapshot(source: &Path, target: &Path) -> Result<()> {
         backup.run_to_completion(100, Duration::from_millis(10), None)?;
     }
     db.execute_batch("CREATE TABLE IF NOT EXISTS minarbot_backup (format TEXT NOT NULL,version INTEGER NOT NULL,created TEXT NOT NULL) STRICT; DELETE FROM minarbot_backup;")?;
+    let (format, version) = data_format::WORKSPACE_BACKUP;
     db.execute(
-        "INSERT INTO minarbot_backup VALUES ('minarbot-workspace',1,?)",
-        [timestamp()?],
+        "INSERT INTO minarbot_backup VALUES (?,?,?)",
+        rusqlite::params![format, version, timestamp()?],
     )?;
     let migrations = db
         .prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='schema_migrations'")?
@@ -83,7 +86,12 @@ fn snapshot(source: &Path, target: &Path) -> Result<()> {
             [],
             |r| r.get(0),
         )?;
-        db.execute_batch("UPDATE minarbot_backup SET format='minarbot-canonical-v6',version=6; CREATE TABLE IF NOT EXISTS minarbot_backup_authority(generation TEXT NOT NULL,owner_account TEXT REFERENCES accounts(id)) STRICT;")?;
+        let (format, version) = data_format::CANONICAL_BACKUP;
+        db.execute(
+            "UPDATE minarbot_backup SET format=?,version=?",
+            rusqlite::params![format, version],
+        )?;
+        db.execute_batch("CREATE TABLE IF NOT EXISTS minarbot_backup_authority(generation TEXT NOT NULL,owner_account TEXT REFERENCES accounts(id)) STRICT;")?;
         let columns = db
             .prepare("PRAGMA table_info(minarbot_backup_authority)")?
             .query_map([], |r| r.get::<_, String>(1))?

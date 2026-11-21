@@ -41,7 +41,7 @@ test('nine distinct tools complete before per-task budget requests a final answe
   } finally { await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }
 });
 
-import { markCurrentTestSchema, testDatabase } from './test-support/database.ts';
+import { markMinarbotData, testDatabase } from './test-support/database.ts';
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
 import sharp from 'sharp';
@@ -104,7 +104,7 @@ test('budget setting rejects malformed values, migrates legacy profiles, survive
   } finally { await f.close(); }
   const dir = mkdtempSync(join(tmpdir(), 'minarbot-budget-migration-')), database = join(dir, 'old.sqlite');
   const db = testDatabase(database), id = randomUUID();
-  markCurrentTestSchema(db);
+  markMinarbotData(db);
   db.exec('CREATE TABLE agents(id TEXT PRIMARY KEY,name TEXT NOT NULL,model TEXT NOT NULL,instructions TEXT NOT NULL) STRICT');
   db.prepare('INSERT INTO agents VALUES (?,?,?,?)').run(id,'Old','fixture','Help.'); db.close();
   const app = await startApp({ database });

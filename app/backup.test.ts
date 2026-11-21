@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { testDatabase } from './test-support/database.ts';
+import { markMinarbotData, testDatabase } from './test-support/database.ts';
 import { chmodSync, linkSync, mkdtempSync, readFileSync, writeFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -146,7 +146,7 @@ test('live backup restores history while holding pending work and disabling auto
     const symlink = join(dir, 'symlink.sqlite'); symlinkSync(destination, symlink); assert.throws(() => restoreWorkspace(file, symlink), /new database/);
     const dangling = join(dir, 'dangling.sqlite'); symlinkSync(join(dir, 'missing'), dangling + '-wal');
     assert.throws(() => restoreWorkspace(file, dangling), /new database/);
-    const unknown = join(dir, 'unknown.sqlite'), unknownDb = testDatabase(unknown); unknownDb.exec("CREATE TABLE minarbot_backup(format TEXT,version INTEGER); INSERT INTO minarbot_backup VALUES ('minarbot-workspace',99)"); unknownDb.close();
+    const unknown = join(dir, 'unknown.sqlite'), unknownDb = testDatabase(unknown); markMinarbotData(unknownDb); unknownDb.exec("CREATE TABLE minarbot_backup(format TEXT,version INTEGER); INSERT INTO minarbot_backup VALUES ('minarbot-workspace',99)"); unknownDb.close();
     assert.throws(() => restoreWorkspace(unknown, join(dir, 'unknown-target.sqlite')), /backup format/);
     const corrupt = join(dir, 'corrupt'); writeFileSync(corrupt, 'not sqlite'); assert.throws(() => restoreWorkspace(corrupt, join(dir, 'invalid.sqlite')));
   } finally { await restored?.close(); await app.close(); provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); }

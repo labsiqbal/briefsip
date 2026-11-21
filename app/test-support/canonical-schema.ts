@@ -2,12 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 import { digestCommand } from '../shared/protocol.ts';
-import { markCurrentTestSchema } from './database.ts';
+import { markMinarbotData } from './database.ts';
 
 // Keep fixture DDL and migration checksums independent of Rust's migrations.
 export function installCanonicalFixture(db: DatabaseSync, through: 1 | 2 | 3 | 4 = 4) {
   db.function('minarbot_capability_digest', { deterministic: true }, value => digestCommand(['minarbot-capabilities-v1', JSON.parse(String(value))]));
-  markCurrentTestSchema(db);
+  markMinarbotData(db);
   db.exec('BEGIN IMMEDIATE');
   try {
     for (let version = 1; version <= through; version++) {

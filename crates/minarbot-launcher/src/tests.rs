@@ -64,6 +64,7 @@ fn canonical_snapshot_preserves_authority_and_is_immutable() -> Result<()> {
         let source = dir.join("db.sqlite");
         let target = dir.join("snapshot/minarbot.sqlite");
         let db = Connection::open(&source)?;
+        minarbot_launcher::data_format::mark(&db)?;
         db.execute_batch("CREATE TABLE schema_migrations(version INTEGER); INSERT INTO schema_migrations VALUES(6);
             CREATE TABLE authority_state(id INTEGER,generation TEXT); INSERT INTO authority_state VALUES(1,'generation-one');
             CREATE TABLE accounts(id TEXT PRIMARY KEY); INSERT INTO accounts VALUES('owner');
@@ -77,6 +78,7 @@ fn canonical_snapshot_preserves_authority_and_is_immutable() -> Result<()> {
             Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
         })?;
         assert_eq!(marker, ("minarbot-canonical-v6".into(), 6));
+        assert!(minarbot_launcher::data_format::is_marked(&snapshot)?);
         let authority = snapshot.query_row(
             "SELECT generation,owner_account FROM minarbot_backup_authority",
             [],
