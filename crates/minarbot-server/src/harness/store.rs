@@ -106,16 +106,11 @@ fn home(
         fingerprint,
         login_id: login.map(|(id, _)| id.to_owned()),
     };
-    if let Some(folder) = device {
-        // The device sign-in lives in the engine's own folder. Point the engine at
-        // it and write nothing there; the CLI's own config and rules apply.
-        let variable = if runtime == "codex" {
-            "CODEX_HOME"
-        } else {
-            "CLAUDE_CONFIG_DIR"
-        };
+    if let (Some(folder), "codex") = (device, runtime) {
+        // The device sign-in lives in Codex's own folder. Point Codex at it and
+        // write nothing there; the CLI's own config and rules apply.
         h.environment
-            .insert(variable.into(), folder.to_string_lossy().into_owned());
+            .insert("CODEX_HOME".into(), folder.to_string_lossy().into_owned());
     } else if runtime == "codex" {
         let codex = path.join(".codex");
         DirBuilder::new()
@@ -1411,7 +1406,9 @@ pub async fn run(
     let runtime = string(&profile, "runtime");
     let executable = super::executable(state, runtime);
     let mise = executable.as_deref().is_some_and(process::mise_shim);
-    let isolated_home = mise || ["codex", "claude"].contains(&runtime);
+    // Claude on the device sign-in runs with the real HOME; see logins::device_environment.
+    let device_claude = device.is_some() && runtime == "claude";
+    let isolated_home = (mise || ["codex", "claude"].contains(&runtime)) && !device_claude;
     let conversation = turn["channel"]
         .as_str()
         .or(turn["thread"].as_str())
@@ -1446,6 +1443,13 @@ pub async fn run(
     };
     let mut env = state.config.harness.environment.clone();
     env.extend(project_environment.clone());
+    if device_claude {
+        env.extend(
+            data::logins::device_environment(runtime)
+                .into_iter()
+                .map(|(key, value)| (key.into(), value.to_string_lossy().into_owned())),
+        );
+    }
     if login.is_some() || device.is_some() {
         for variable in [
             "OPENAI_API_KEY",
@@ -1877,13 +1881,14 @@ while read -r request; do :; done
     }
 
     #[test]
-    fn device_login_home_points_at_the_engine_folder_and_writes_nothing_there(
+    fn device_login_home_points_at_the_codex_folder_and_writes_nothing_there(
     ) -> crate::db::Result<()> {
         let scratch = process::ProbeHome::new()?;
         let database = scratch.0.join("state.sqlite");
         let _lease = config::prepare_homes(&database)?;
         let root = config::homes_root(&database)?;
-        for (runtime, variable) in [("codex", "CODEX_HOME"), ("claude", "CLAUDE_CONFIG_DIR")] {
+        // Claude on the device sign-in skips the private home entirely.
+        for (runtime, variable) in [("codex", "CODEX_HOME")] {
             let folder = scratch.0.join(format!("device-{runtime}"));
             std::fs::create_dir(&folder)?;
             let session = home(&root, runtime, None, None, Some(&folder), "", String::new())

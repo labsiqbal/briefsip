@@ -132,6 +132,26 @@ pub(crate) fn device_folder(runtime: &str) -> Option<PathBuf> {
         .filter(|path| path.is_absolute())
 }
 
+/// Environment that makes the engine read its sign-in from the device folder.
+/// Claude Code keeps its global state in `~/.claude.json` beside `~/.claude`
+/// and moves it under `CLAUDE_CONFIG_DIR` once that is set, so Claude runs with
+/// the real HOME and inherits `CLAUDE_CONFIG_DIR` only when the user set it.
+pub(crate) fn device_environment(runtime: &str) -> Vec<(&'static str, PathBuf)> {
+    let (variable, _) = runtime_file(runtime);
+    match runtime {
+        "codex" => device_folder(runtime)
+            .map(|folder| vec![(variable, folder)])
+            .unwrap_or_default(),
+        "claude" => std::env::var_os(variable)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .map(|folder| vec![(variable, folder)])
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
 /// Reads the device sign-in so harness output can redact its tokens.
 pub(crate) fn device_credentials(runtime: &str) -> Option<Vec<u8>> {
     let path = device_folder(runtime)?.join(credential_name(runtime));
@@ -146,9 +166,8 @@ pub(crate) async fn device_signed_in(
     executable: &Path,
     runtime: &str,
 ) -> Option<bool> {
-    let folder = device_folder(runtime)?;
+    device_folder(runtime)?;
     let home = std::env::var_os("HOME")?;
-    let (variable, _) = runtime_file(runtime);
     let args: &[&str] = if runtime == "codex" {
         &["login", "status"]
     } else {
@@ -159,7 +178,7 @@ pub(crate) async fn device_signed_in(
         .env_clear()
         .env("PATH", crate::harness::path(state))
         .env("HOME", &home)
-        .env(variable, &folder)
+        .envs(device_environment(runtime))
         .current_dir(&home)
         .stdin(Stdio::null())
         .stdout(Stdio::null())

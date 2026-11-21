@@ -57,6 +57,34 @@ test("agents on this machine's Codex sign-in use the CLI folder without writing 
   } finally { await app?.close(); if (previous === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = previous; rmSync(directory, { recursive: true, force: true }); }
 });
 
+test("agents on this machine's Claude Code sign-in run with the real HOME and add nothing to ~/.claude", async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'minarbot-device-claude-')), executable = join(directory, 'claude'), home = join(directory, 'home');
+  writeFileSync(executable, `#!${process.execPath}\n` + readFileSync(new URL('./fixtures/fake-harness.mjs', import.meta.url), 'utf8').split('\n').slice(1).join('\n')); chmodSync(executable, 0o700);
+  mkdirSync(join(home, '.claude'), { recursive: true }); writeFileSync(join(home, '.claude', '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'synthetic-device-access', refreshToken: 'synthetic-device-refresh' } }), { mode: 0o600 });
+  // Claude Code reads ~/.claude.json beside ~/.claude; setting CLAUDE_CONFIG_DIR would move that state into ~/.claude.
+  const previous = { HOME: process.env.HOME, CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR };
+  process.env.HOME = home; delete process.env.CLAUDE_CONFIG_DIR;
+  let app: Awaited<ReturnType<typeof startApp>> | undefined;
+  try {
+    app = await startApp({ database: join(directory, 'state.sqlite'), harness: { executables: { claude: executable } } });
+    const origin = app.origin;
+    const api = async (path: string, body?: unknown) => { const response = await fetch(origin + path, { method: body ? 'POST' : 'GET', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); const data = await response.json(); assert(response.ok, JSON.stringify(data)); return data; };
+    assert.equal((await api('/api/runtimes')).choices.find((choice: { runtime: string }) => choice.runtime === 'claude').signedIn, true);
+    const agent = await api('/api/agents', { id: randomUUID(), runtime: 'claude', name: 'Clara', model: 'default', providerAccount: 'device', instructions: 'Help.' });
+    const path = `/api/agents/${agent.id}`, id = randomUUID(); await api(path + '/turns', { id, text: 'Hello' });
+    let row;
+    for (let n = 0; n < 300; n++) { row = (await api(path + '/turns')).find((item: { id: string }) => item.id === id); if (['done', 'failed'].includes(row.status)) break; await new Promise(resolve => setTimeout(resolve, 10)); }
+    assert.equal(row.status, 'done', row.error);
+    const turn = readFileSync(join(directory, 'agent-workspaces', agent.id, 'fake-log.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line)).find(item => item.type === 'turn');
+    assert.equal(turn.home, home); assert.equal(turn.claudeConfigDir, null);
+    assert.deepEqual(readdirSync(join(home, '.claude')), ['.credentials.json']);
+  } finally {
+    await app?.close();
+    for (const [key, value] of Object.entries(previous)) if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('provider isolation, account home rotation and MCP shell approval boundaries', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'minarbot-provider-home-')), executable = join(directory, 'codex');
   writeFileSync(executable, `#!${process.execPath}\n` + readFileSync(new URL('./fixtures/fake-harness.mjs', import.meta.url), 'utf8').split('\n').slice(1).join('\n')); chmodSync(executable, 0o700);

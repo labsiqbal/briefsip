@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 if (process.argv.includes('--version')) { console.log('fake-harness 1.0.0'); process.exit(0); }
 // Sign-in status: signed in when the engine folder holds the CLI's credential file.
 if (process.argv[2] === 'login' && process.argv[3] === 'status') process.exit(existsSync(`${process.env.CODEX_HOME}/auth.json`) ? 0 : 1);
-if (process.argv[2] === 'auth' && process.argv[3] === 'status') process.exit(existsSync(`${process.env.CLAUDE_CONFIG_DIR}/.credentials.json`) ? 0 : 1);
+if (process.argv[2] === 'auth' && process.argv[3] === 'status') process.exit(existsSync(`${process.env.CLAUDE_CONFIG_DIR ?? `${process.env.HOME}/.claude`}/.credentials.json`) ? 0 : 1);
 for (const key of ['OPENAI_API_KEY','ANTHROPIC_API_KEY','COMPOSIO_API_KEY','MINARBOT_SCRIPT_TOKEN','NODE_OPTIONS','MINARBOT_HARNESS_CANARY']) assert.equal(process.env[key], key === 'ANTHROPIC_API_KEY' && process.env[key] === 'minarbot-no-key' ? 'minarbot-no-key' : undefined, `${key} leaked`);
 const codex = process.argv.includes('app-server');
 const arg = flag => { const at = process.argv.indexOf(flag); return at >= 0 ? process.argv[at + 1] : process.argv.find(value => value.startsWith(flag + '='))?.slice(flag.length + 1); };
@@ -43,7 +43,7 @@ function finish(allowed = true) {
 }
 async function run(text) {
   if (text.includes('STREAM_GATE') || text.includes('STREAM_CRASH')) { void streamGate(text); return; }
-  prompt = text; log({ type: 'turn', session, prompt }); delta('Harness ');
+  prompt = text; log({ type: 'turn', session, prompt, home: process.env.HOME, claudeConfigDir: process.env.CLAUDE_CONFIG_DIR ?? null }); delta('Harness ');
   if (text.includes('FIRST_PARTIAL_GATE')) {
     while (!existsSync('stream-release')) await new Promise(resolve => setTimeout(resolve, 5));
   }
