@@ -27,7 +27,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt},
     net::{UnixListener, UnixStream},
     process::{Child, Command},
     signal::unix::{signal, SignalKind},
@@ -66,6 +66,9 @@ struct Attempt {
 }
 struct Managed {
     process: Child,
+    /// Last `Error: ...` line the server wrote to stderr, as its startup failure.
+    failure: Rc<RefCell<Option<String>>>,
+    stderr: Option<JoinHandle<()>>,
 }
 struct Launcher {
     config: Config,
@@ -136,13 +139,23 @@ impl Launcher {
             .envs(&self.config.env)
             .env("MINARBOT_RELEASE_ID", id)
             .stdin(Stdio::null())
+            .stderr(Stdio::piped())
             .kill_on_drop(true);
         if trial {
             let id = self.attempt()?.id;
             command.env("MINARBOT_UPDATE_TRIAL", &id);
         }
-        let result = command.spawn();
-        *self.child.borrow_mut() = Some(Managed { process: result? });
+        let mut process = command.spawn()?;
+        let failure = Rc::new(RefCell::new(None));
+        let stderr = process
+            .stderr
+            .take()
+            .map(|stderr| tokio::task::spawn_local(forward_stderr(stderr, failure.clone())));
+        *self.child.borrow_mut() = Some(Managed {
+            process,
+            failure,
+            stderr,
+        });
         Ok(())
     }
     async fn stop_child(&self) -> Result<()> {
@@ -172,13 +185,28 @@ impl Launcher {
             None => Ok(true),
         }
     }
+    async fn exit_reason(&self) -> String {
+        let (stderr, failure) = match self.child.borrow_mut().as_mut() {
+            Some(child) => (child.stderr.take(), child.failure.clone()),
+            None => (None, Rc::default()),
+        };
+        if let Some(stderr) = stderr {
+            // The pipe closes once the server has exited, so this only waits for the tail.
+            let _ = timeout(Duration::from_secs(1), stderr).await;
+        }
+        let failure = failure.borrow().clone();
+        match failure {
+            Some(message) => format!("Candidate exited before becoming healthy: {message}"),
+            None => "Candidate exited before becoming healthy.".into(),
+        }
+    }
     async fn health(&self, id: &str) -> Result<()> {
         let version =
             json(&path_for(&self.config.releases, id)?.join("release.json"))?["version"].clone();
         let deadline = Instant::now() + self.config.timeout;
         while !self.stopping.get() && Instant::now() < deadline {
             if self.child_exited()? {
-                return Err("Candidate exited before becoming healthy.".into());
+                return Err(self.exit_reason().await.into());
             }
             if timeout(
                 Duration::from_millis(500),
@@ -545,6 +573,36 @@ async fn launch(config: Config) -> Result<()> {
     remove(&socket_path)?;
     stopped?;
     result
+}
+/// Copies the server's stderr to the launcher's own, so the journal keeps every line,
+/// and remembers the last startup error. It reads until end of file even past invalid
+/// UTF-8, because a full pipe would block the server.
+async fn forward_stderr(stderr: tokio::process::ChildStderr, failure: Rc<RefCell<Option<String>>>) {
+    use std::io::Write;
+    let mut reader = tokio::io::BufReader::new(stderr);
+    let mut line = Vec::new();
+    while matches!(reader.read_until(b'\n', &mut line).await, Ok(n) if n > 0) {
+        let _ = std::io::stderr().write_all(&line);
+        if let Some(message) = startup_error(&String::from_utf8_lossy(&line)) {
+            *failure.borrow_mut() = Some(message);
+        }
+        line.clear();
+    }
+}
+/// Reads the line Rust prints when `main` returns an error. Only the server's own
+/// error message reaches the rollback reason, cut to 300 characters.
+fn startup_error(line: &str) -> Option<String> {
+    let message = line.trim_end().strip_prefix("Error: ")?;
+    let message = match message.strip_prefix('"').and_then(|m| m.strip_suffix('"')) {
+        Some(quoted) => quoted.replace("\\\"", "\"").replace("\\\\", "\\"),
+        None => message.to_owned(),
+    };
+    let message: String = message
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(300)
+        .collect();
+    (!message.is_empty()).then_some(message)
 }
 fn run_server(binary: &Path, parent: &str) -> Result<()> {
     use std::os::unix::process::CommandExt;

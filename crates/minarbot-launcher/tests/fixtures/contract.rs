@@ -21,6 +21,8 @@ fn quote(value: &str) -> String {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let version = env!("MINARBOT_FIXTURE_VERSION");
     let mode = env!("MINARBOT_FIXTURE_MODE");
+    // Fails the way the real server's main does when it refuses unmarked data.
+    if mode == "refuse" { return Err("This database does not carry the Minarbot data marker. Install fresh.".into()); }
     let file = CString::new(format!("{}/minarbot.sqlite", env::var("MINARBOT_DATA_DIR")?))?;
     let sql = CString::new(if mode == "healthy" {
         "CREATE TABLE IF NOT EXISTS data(value TEXT);CREATE TABLE IF NOT EXISTS turns(status TEXT);"

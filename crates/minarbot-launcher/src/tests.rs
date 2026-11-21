@@ -1,4 +1,4 @@
-use crate::{backup, config::parse_env, files::*, Result};
+use crate::{backup, config::parse_env, files::*, startup_error, Result};
 use rusqlite::Connection;
 use std::{fs, path::Path};
 
@@ -124,4 +124,21 @@ fn invalid_restore_and_missing_canonical_owner_preserve_source() -> Result<()> {
         assert!(!target.exists());
         Ok(())
     })
+}
+#[test]
+fn startup_error_keeps_only_the_servers_error_line() -> Result<()> {
+    assert_eq!(
+        startup_error("Error: \"This database does not carry the marker. Say \\\"hi\\\".\"\n")
+            .as_deref(),
+        Some("This database does not carry the marker. Say \"hi\".")
+    );
+    assert_eq!(
+        startup_error("Error: Error { kind: InvalidInput }").as_deref(),
+        Some("Error { kind: InvalidInput }")
+    );
+    assert_eq!(startup_error("listening on 127.0.0.1:4317"), None);
+    assert_eq!(startup_error("Error: \"\""), None);
+    let long = startup_error(&format!("Error: {}\u{7}", "x".repeat(400))).ok_or("missing")?;
+    assert_eq!(long, "x".repeat(300));
+    Ok(())
 }
